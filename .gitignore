@@ -1,0 +1,9 @@
+node_modules/
+out/
+cache/
+broadcast/
+.env
+bot/node_modules/
+bot/data/
+bot/dist/
+.DS_Store

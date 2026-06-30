@@ -1,0 +1,4 @@
+@aave/core-v3/=node_modules/@aave/core-v3/
+@uniswap/v3-periphery/=node_modules/@uniswap/v3-periphery/
+@uniswap/v3-core/=node_modules/@uniswap/v3-core/
+@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/
