@@ -5,15 +5,26 @@ import {IPool} from "@aave/core-v3/contracts/interfaces/IPool.sol";
 import {IFlashLoanSimpleReceiver} from "@aave/core-v3/contracts/flashloan/interfaces/IFlashLoanSimpleReceiver.sol";
 import {IPoolAddressesProvider} from "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ISwapRouter} from "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
 
 contract FlashLiquidator is IFlashLoanSimpleReceiver {
+    using SafeERC20 for IERC20;
+
     IPoolAddressesProvider public immutable ADDRESSES_PROVIDER;
     IPool public immutable POOL;
     ISwapRouter public immutable SWAP_ROUTER;
     address public owner;
 
-    event LiquidationExecuted(address indexed user, uint256 profit);
+    event LiquidationExecuted(
+        address indexed user,
+        address debtAsset,
+        address collateralAsset,
+        uint256 debtCovered,
+        uint256 collateralReceived,
+        uint256 amountOut,
+        uint256 profit
+    );
 
     constructor(
         address _addressProvider,
@@ -30,6 +41,10 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver {
         _;
     }
 
+    function transferOwnership(address newOwner) external onlyOwner {
+        owner = newOwner;
+    }
+
     /**
      * @dev 触发清算流程
      * @param user 被清算用户的地址
@@ -41,10 +56,13 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver {
         address user,
         address debtAsset,
         address collateralAsset,
-        uint256 debtToCover
+        uint256 debtToCover,
+        bool useMaxCloseFactor,
+        uint24 poolFee,
+        uint256 amountOutMinimum
     ) external onlyOwner {
         // 传递给闪电贷回调函数的参数
-        bytes memory params = abi.encode(user, collateralAsset);
+        bytes memory params = abi.encode(user, collateralAsset, amountOutMinimum, poolFee, useMaxCloseFactor);
 
         // 发起闪电贷
         POOL.flashLoanSimple(
@@ -70,19 +88,25 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver {
         require(initiator == address(this), "Initiator must be this");
 
         // 1. 解析参数
-        (address user, address collateralAsset) = abi.decode(params, (address, address));
+        (address user, address collateralAsset, uint256 amountOutMinimum, uint24 poolFee, bool useMaxCloseFactor) = abi.decode(
+            params,
+            (address, address, uint256, uint24, bool)
+        );
 
         // 2. 授权 Aave 扣减我们将要用于清算的资金
-        IERC20(asset).approve(address(POOL), amount);
+        // We approve MAX because we might flashloan a bit more than the exact debt to account for interest accrual
+        IERC20(asset).forceApprove(address(POOL), type(uint256).max);
 
         // 3. 执行清算 (替用户还清 debtAsset，拿走 collateralAsset)
         uint256 collateralBefore = IERC20(collateralAsset).balanceOf(address(this));
+        
+        uint256 actualDebtToLiquidate = useMaxCloseFactor ? type(uint256).max : amount;
         
         POOL.liquidationCall(
             collateralAsset,
             asset,
             user,
-            amount,
+            actualDebtToLiquidate,
             false // receiveAToken = false (直接接收底层代币，不要 aToken)
         );
 
@@ -91,18 +115,18 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver {
 
         // 4. 将抵押品在 Uniswap 换回借出的资产
         // 授权 Uniswap 路由扣减我们的抵押品
-        IERC20(collateralAsset).approve(address(SWAP_ROUTER), collateralReceived);
+        IERC20(collateralAsset).forceApprove(address(SWAP_ROUTER), collateralReceived);
 
         // 这里为了简化演示，使用 ExactInputSingle
         // 实际生产中应动态计算或传入 fee tier 和 path
         ISwapRouter.ExactInputSingleParams memory swapParams = ISwapRouter.ExactInputSingleParams({
             tokenIn: collateralAsset,
             tokenOut: asset,
-            fee: 500, // 0.05% WETH/USDC pool has best liquidity
+            fee: poolFee, // 动态传入的费率
             recipient: address(this),
             deadline: block.timestamp,
             amountIn: collateralReceived,
-            amountOutMinimum: 0, // 在实际生产中必须通过链下计算并传入此值，防止三明治攻击！
+            amountOutMinimum: amountOutMinimum, // 外部精确计算的滑点底线，硬抗三明治攻击
             sqrtPriceLimitX96: 0
         });
 
@@ -116,13 +140,21 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver {
         );
 
         // 6. 授权 Aave 扣除欠款 (Aave 会在此函数执行完毕后自动从我们账户扣钱)
-        IERC20(asset).approve(address(POOL), amountToRepay);
+        // 已经 approve 过 max，无需再次 approve
 
         // 7. 计算纯利润并转移
         uint256 profit = IERC20(asset).balanceOf(address(this)) - amountToRepay;
         if (profit > 0) {
-            IERC20(asset).transfer(owner, profit);
-            emit LiquidationExecuted(user, profit);
+            IERC20(asset).safeTransfer(owner, profit);
+            emit LiquidationExecuted(
+                user,
+                asset,
+                collateralAsset,
+                amount,
+                collateralReceived,
+                amountOut,
+                profit
+            );
         }
 
         return true;
@@ -130,6 +162,6 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver {
 
     // 提供给机器人的紧急提取资金通道
     function withdrawToken(address token) external onlyOwner {
-        IERC20(token).transfer(owner, IERC20(token).balanceOf(address(this)));
+        IERC20(token).safeTransfer(owner, IERC20(token).balanceOf(address(this)));
     }
 }

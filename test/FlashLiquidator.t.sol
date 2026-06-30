@@ -91,7 +91,10 @@ contract FlashLiquidatorTest is Test {
             victim,
             USDC,
             WETH,
-            debtToCover
+            debtToCover,
+            false,
+            3000,
+            0
         );
 
         uint256 botBalanceAfter = IERC20(USDC).balanceOf(address(this));
