@@ -56,7 +56,12 @@ async function runE2E() {
     );
 
     console.log("[1] Cold Start: Loading Global Reserves List...");
-    const ASSETS: string[] = await pool.getReservesList();
+    let ASSETS: string[] = await pool.getReservesList();
+    // OPTIMIZATION: Only fetch WETH and USDT to avoid Alchemy free-tier RPC rate limits
+    ASSETS = [
+        '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', // WETH
+        '0xdAC17F958D2ee523a2206206994597C13D831ec7'  // USDT
+    ];
     
     const blockTag = await provider.getBlockNumber();
     const block = await provider.getBlock(blockTag);
@@ -79,14 +84,14 @@ async function runE2E() {
     const router = new ExecutionRouter(RPC_URL);
 
     console.log("\n🚨🚨🚨 CHAINLINK ORACLE EVENT DETECTED 🚨🚨🚨");
-    console.log("WETH Price drops by 40%!\n");
+    console.log("WETH Price drops by 5%!\n");
 
     // CRASH THE PRICE IN MEMORY AND ON-CHAIN
     const WETH = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'.toLowerCase();
     let crashedPrice = 0n;
     for (const [asset, config] of reservesConfig.entries()) {
         if (asset.toLowerCase() === WETH) {
-            crashedPrice = (config.priceInBaseCurrency * 60n) / 100n;
+            crashedPrice = (config.priceInBaseCurrency * 95n) / 100n; // 5% drop
             config.priceInBaseCurrency = crashedPrice;
         }
     }
@@ -143,7 +148,7 @@ contract DynamicMock {
                     console.log(`     - Real Swap Output: ${ticket.quoterAmountOutToken}`);
                     console.log(`     - Minimum Output Req: ${ticket.amountOutMinimumToken}`);
                     console.log(`     - Required Repayment: ${ticket.amountToRepayToken}`);
-                    console.log(`     - Estimated Profit: ${ticket.netProfitToken}`);
+                    console.log(`     - Estimated Pre-Gas Profit: ${ticket.netProfitToken}`);
                     
                     console.log(`\n  -> 💥 FIRING TRANSACTION TO ANVIL...`);
                     
@@ -181,14 +186,47 @@ contract DynamicMock {
                                     ]);
                                     const parsedLog = iface.parseLog(log);
                                     if (parsedLog && parsedLog.name === "LiquidationExecuted") {
+                                        const profit = BigInt(parsedLog.args.profit);
+                                        const amountOut = BigInt(parsedLog.args.amountOut);
+                                        
+                                        // Gas calculation
+                                        const gasCostWei = BigInt(receipt.gasUsed) * BigInt(receipt.gasPrice);
+                                        // 1 WETH = crashedPrice (e.g. 3000 * 1e8). WETH has 18 decimals, USDT has 6.
+                                        // Gas cost in USDT = (gasCostWei * WETH_PRICE_IN_USD_1e8) / 1e8 / 1e18 * 1e6
+                                        // = gasCostWei * WETH_PRICE_IN_USD_1e8 / 1e20
+                                        const gasCostUSDT = (gasCostWei * crashedPrice) / 100000000000000000000n; 
+                                        const trueNetProfit = profit - gasCostUSDT;
+                                        
+                                        // Pure Bonus Calculation (5%)
+                                        const debtCovered = BigInt(parsedLog.args.debtCovered);
+                                        const pureBonus = (debtCovered * 5n) / 100n;
+                                        const arbProfit = profit - pureBonus;
+
                                         console.log("\n==================================================");
                                         console.log("💰💰💰 TRUE ON-CHAIN RECONCILIATION 💰💰💰");
                                         console.log(`- Liquidated User: ${parsedLog.args.user}`);
-                                        console.log(`- Debt Covered: ${parsedLog.args.debtCovered}`);
+                                        console.log(`- Debt Covered: ${debtCovered}`);
                                         console.log(`- Collateral Seized: ${parsedLog.args.collateralReceived}`);
-                                        console.log(`- Uniswap AmountOut: ${parsedLog.args.amountOut}`);
-                                        console.log(`- Final True Profit: ${parsedLog.args.profit}`);
-                                        console.log(`\n- Off-Chain Quoter vs True AmountOut Delta: ${ticket.quoterAmountOutToken - parsedLog.args.amountOut}`);
+                                        console.log(`- Uniswap AmountOut: ${amountOut}`);
+                                        console.log(`- On-Chain Profit (Pre-Gas): ${profit}`);
+                                        console.log(`- Gas Cost (in USDT): ${gasCostUSDT}`);
+                                        console.log(`- TRUE NET PROFIT: ${trueNetProfit}`);
+                                        console.log(`\n--- Profit Attribution ---`);
+                                        console.log(`- Pure Liquidation Bonus (5%): ${pureBonus}`);
+                                        console.log(`- Oracle-Lag Arb: ${arbProfit}`);
+                                        
+                                        // Bribe simulation
+                                        const bribe = trueNetProfit > 0n ? trueNetProfit / 2n : 0n;
+                                        const postBribeProfit = trueNetProfit - bribe;
+                                        
+                                        console.log(`\n--- MEV Bribe Simulation (50%) ---`);
+                                        console.log(`- Builder Bribe: ${bribe}`);
+                                        console.log(`- Final Post-Bribe Profit: ${postBribeProfit}`);
+                                        
+                                        if (postBribeProfit <= 0n) {
+                                            console.log(`\n🚨 MISSED TARGET: Post-Bribe Profit is Negative/Zero!`);
+                                        }
+
                                         console.log("==================================================\n");
                                     }
                                 } catch (e) {

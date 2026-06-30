@@ -6,9 +6,10 @@ import {IFlashLoanSimpleReceiver} from "@aave/core-v3/contracts/flashloan/interf
 import {IPoolAddressesProvider} from "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {ISwapRouter} from "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
 
-contract FlashLiquidator is IFlashLoanSimpleReceiver {
+contract FlashLiquidator is IFlashLoanSimpleReceiver, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     IPoolAddressesProvider public immutable ADDRESSES_PROVIDER;
@@ -60,7 +61,7 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver {
         bool useMaxCloseFactor,
         uint24 poolFee,
         uint256 amountOutMinimum
-    ) external onlyOwner {
+    ) external onlyOwner nonReentrant {
         // 传递给闪电贷回调函数的参数
         bytes memory params = abi.encode(user, collateralAsset, amountOutMinimum, poolFee, useMaxCloseFactor);
 
@@ -113,6 +114,9 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver {
         uint256 collateralReceived = IERC20(collateralAsset).balanceOf(address(this)) - collateralBefore;
         require(collateralReceived > 0, "Liquidation failed or zero collateral");
 
+        // liquidationCall 结束，重置无限授权
+        IERC20(asset).forceApprove(address(POOL), 0);
+
         // 4. 将抵押品在 Uniswap 换回借出的资产
         // 授权 Uniswap 路由扣减我们的抵押品
         IERC20(collateralAsset).forceApprove(address(SWAP_ROUTER), collateralReceived);
@@ -140,7 +144,7 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver {
         );
 
         // 6. 授权 Aave 扣除欠款 (Aave 会在此函数执行完毕后自动从我们账户扣钱)
-        // 已经 approve 过 max，无需再次 approve
+        IERC20(asset).forceApprove(address(POOL), amountToRepay);
 
         // 7. 计算纯利润并转移
         uint256 profit = IERC20(asset).balanceOf(address(this)) - amountToRepay;
@@ -156,6 +160,9 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver {
                 profit
             );
         }
+
+        // 8. 重置授权，确保不留任何敞口 (最小权限原则)
+        IERC20(collateralAsset).forceApprove(address(SWAP_ROUTER), 0);
 
         return true;
     }
