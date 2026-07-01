@@ -441,7 +441,7 @@ export class LiquidationExecutor {
    * prod-002.06: Signed Tx Construction from Ticket + Opportunity
    * Constructs the signed transaction payload without broadcasting.
    */
-  async buildSignedTx(opportunity: LiquidationOpportunity, ticket: ExecutionTicket): Promise<string | null> {
+  async buildSignedTx(opportunity: LiquidationOpportunity, ticket: ExecutionTicket, nonce?: number): Promise<string | null> {
     const chainCfg = config.getChainConfig(this.chainId);
     const wallet = this.wallet || config.getExecutorWallet(this.rpcUrl);
     
@@ -471,6 +471,10 @@ export class LiquidationExecutor {
       amountOutMin,
       gasOpts
     );
+
+    if (nonce !== undefined) {
+      popTx.nonce = nonce;
+    }
 
     const tx = await wallet.populateTransaction(popTx);
     return wallet.signTransaction(tx);
