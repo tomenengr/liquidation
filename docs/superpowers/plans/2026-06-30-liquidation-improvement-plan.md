@@ -288,10 +288,10 @@ All use config.getChainConfig; preserve post-ticket. TDD in mevBundle + tests. N
 **Note:** Prod-002 start in 001.17: added MOCK_MEV flag + real/sim logic skeleton to mevBundle (TDD), updated config+plan. Full in later. 
 
 **prod-003: Ops/Resilience Hardening — 16 subtasks**  
-- prod-003.01: Centralized Resilience Config Extension (HEALTH_PORT, RPC_FALLBACKS_*, CIRCUIT_*, etc. in getChainConfig)  
-- prod-003.02: Structured Logger Module + Levels + Rotation (logger.ts)  
-- prod-003.03: HTTP Health & Metrics Server (/health, /metrics)  
-- prod-003.04-05: RPC Fallbacks List + Provider Pool + Automatic Failover  
+- prod-003.01: Centralized Resilience Config Extension  ✅ (HEALTH_PORT, RPC_FALLBACKS_*, CIRCUIT_*, etc. in getChainConfig)  
+- prod-003.02: Structured Logger Module + Levels + Rotation  ✅ (logger.ts)  
+- prod-003.03: HTTP Health - prod-003.03: HTTP Health & Metrics Server Metrics Server  ✅ (/health, /metrics)  
+- prod-003.04-05: RPC Fallbacks List + Provider Pool + Automatic Failover  ✅  
 - prod-003.06: Circuit Breakers for Quoter / Subgraph / Bundle Submit  
 - prod-003.07: Nonce Management + Tx Replacement (bump)  
 - prod-003.08: Retries with Exp Backoff + Opportunity Deduplication  

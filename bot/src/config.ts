@@ -113,9 +113,7 @@ export const config = {
   HEALTH_PORT: Number(process.env.HEALTH_PORT || 8080),
   LOG_LEVEL: process.env.LOG_LEVEL || 'INFO',
   LOG_FILE: process.env.LOG_FILE || 'bot.log',
-  RPC_FALLBACKS_ETHEREUM: process.env.RPC_FALLBACKS_ETHEREUM || '',
-  RPC_FALLBACKS_ARBITRUM: process.env.RPC_FALLBACKS_ARBITRUM || '',
-  RPC_FALLBACKS_BASE: process.env.RPC_FALLBACKS_BASE || '',
+
   CIRCUIT_BREAKER_MAX_ERRORS: Number(process.env.CIRCUIT_BREAKER_MAX_ERRORS || 5),
 
   // Execution config (prod-001.02 - CRITICAL centralization):
@@ -204,7 +202,6 @@ export const config = {
       HEALTH_PORT: this.HEALTH_PORT,
       LOG_LEVEL: this.LOG_LEVEL,
       LOG_FILE: this.LOG_FILE,
-      RPC_FALLBACKS: (id === 1 ? this.RPC_FALLBACKS_ETHEREUM : id === 42161 ? this.RPC_FALLBACKS_ARBITRUM : id === 8453 ? this.RPC_FALLBACKS_BASE : '').split(',').filter(Boolean),
       CIRCUIT_BREAKER_MAX_ERRORS: this.CIRCUIT_BREAKER_MAX_ERRORS,
 
       // prod-001.02 execution fields (centralized, exposed via getChainConfig for all prod paths)

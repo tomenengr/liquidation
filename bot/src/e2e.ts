@@ -142,7 +142,7 @@ contract DynamicMock {
     const mockOracleArtifactPath = "./out/DynamicMock.sol/DynamicMock.json";
     const mockOracleArtifact = JSON.parse(fs.readFileSync(mockOracleArtifactPath, "utf8"));
     
-    await provider.send("anvil_setCode", [AAVE_WETH_SOURCE, mockOracleArtifact.deployedBytecode.object]);
+    await (provider as any).send("anvil_setCode", [AAVE_WETH_SOURCE, mockOracleArtifact.deployedBytecode.object]);
     console.log(`   -> WETH Source (${AAVE_WETH_SOURCE}) Replaced with DynamicMock returning ${crashedPrice}!`);
 
     // SWEEP & ROUTE

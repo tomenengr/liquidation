@@ -1,3 +1,4 @@
+import { createProviderPool } from "./providerPool";
 import { ethers } from "ethers";
 import { LiquidationOpportunity, filterOpportunities } from "./profitCalculator";
 import { ReserveDataView } from "./engine/views";
@@ -51,7 +52,7 @@ export class ExecutionRouter {
         this.chainId = id;
         // Use provided rpcUrl (allows caller to pass anvil fork or live), fallback to chainCfg (which does key pattern derive)
         const effectiveRpc = rpcUrl || chainCfg.RPC_URL || config.RPC_URL;
-        this.provider = createProviderPool(effectiveRpc, chainConfig.RPC_FALLBACKS);
+        this.provider = createProviderPool(effectiveRpc, chainCfg.RPC_FALLBACKS);
         this.quoter = new ethers.Contract(addrs.UNISWAP_QUOTER_V2, QUOTER_V2_ABI, this.provider);
         this.wethAddress = addrs.WETH.toLowerCase();
         this.flashloanFeeBps = chainCfg.FLASHLOAN_FEE_BPS || config.FLASHLOAN_FEE_BPS;

@@ -1,3 +1,4 @@
+import { createProviderPool } from "./providerPool";
 import { ethers } from "ethers";
 import { ExecutionTicket } from "./ExecutionRouter";
 import { LiquidationOpportunity } from "./profitCalculator";
@@ -31,8 +32,9 @@ export class MevBundleSubmitter {
   constructor(rpcUrl: string, chainId?: number) {
     const id = chainId ?? config.CHAIN_ID;
     this.chainId = id;
-    const effectiveRpc = rpcUrl || config.getChainConfig(id).RPC_URL || config.RPC_URL;
-    this.provider = createProviderPool(effectiveRpc, chainConfig.RPC_FALLBACKS);
+    const chainCfg = config.getChainConfig(id);
+    const effectiveRpc = rpcUrl || chainCfg.RPC_URL || config.RPC_URL;
+    this.provider = createProviderPool(effectiveRpc, chainCfg.RPC_FALLBACKS);
   }
 
   /**

@@ -1,3 +1,4 @@
+
 import { ethers } from 'ethers';
 import { createProviderPool } from './providerPool';
 import { config } from './config';
@@ -65,7 +66,7 @@ export class LiquidationExecutor {
 
     // Use config-driven RPC (never hardcode)
     this.rpcUrl = rpcUrl || chainCfg.RPC_URL || config.RPC_URL;
-    this.provider = createProviderPool(this.rpcUrl, this.chainConfig.RPC_FALLBACKS);
+    this.provider = createProviderPool(this.rpcUrl, config.getChainConfig(this.chainId).RPC_FALLBACKS);
 
     // Centralized wallet (null when no PRIVATE_KEY -> supports pure dry-run)
     this.wallet = config.getExecutorWallet(this.provider);

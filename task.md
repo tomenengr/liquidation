@@ -63,16 +63,27 @@
 See full plan: `docs/superpowers/plans/2026-06-30-liquidation-improvement-plan.md`
 
 **Production Phase (post 3.12) — detailed subtasks added via 5 parallel subagents (2026-07):**
-- prod-001 (17 subtasks): Real Execution Wiring (executor, signed tx, dry-run, profitable fork E2E) — COMPLETE
-  - prod-001.09 ✅, .11 ✅ (as prior)
-  - prod-001.13 ✅: Anvil gas funding + e2e refactor to shared executor (cleanup of brittle regex/fund timing/no-user asserts done)
-  - prod-001.14 ✅: error/resilience/partial/L2 expanded in harness
-  - prod-001.15 ✅: multi-chain fork harness + package.json e2e:base / test:execution:base etc (anvil+ts-node 8453/1)
-  - prod-001.16 ✅: full profitable real tx E2E on forks(1+8453): fund + executor.execute + receipt + profit>0 + recon (TDD, config)
-  - ... (all 001.01-001.16 covered in execution.test harness + profitable E2E runs on fork 1+8453)
-  - prod-001.17 ✅ (this): Docs/plan/task/AGENTS updates + all npm checks + golden/recon on 1+8453. Mark complete.
+### Active Phase: **prod-003: Ops/Resilience Hardening (16 subtasks)**
+*Goal: Ensure production readiness with health checks, failovers, circuit breakers, and observability.*
+
+- [x] prod-003.01: Centralized Resilience Config Extension
+- [x] prod-003.02: Structured Logger Module + Levels + Rotation
+- [x] prod-003.03: HTTP Health & Metrics Server
+- [x] prod-003.04: RPC Fallbacks List + Provider Pool
+- [x] prod-003.05: Automatic Failover Implementation
+- [ ] prod-003.06: Circuit Breakers for Quoter / Subgraph / Bundle Submit
+- [ ] prod-003.07: Nonce Management + Tx Replacement (bump)
+- [ ] prod-003.08: Retries with Exp Backoff + Opportunity Deduplication
+- [ ] prod-003.09: Graceful Shutdown
+- [ ] prod-003.10: Boot-time Env Validation + Startup Checks
+- [ ] prod-003.11: Process Supervisor Recommendations
+- [ ] prod-003.12: Alerting (ERROR + simple webhook)
+- [ ] prod-003.13: Extend Recon Alerts + Auto Dirty-Mark on Lag
+- [ ] prod-003.14: Resource / Memory Guards + Backpressure Enhancements
+- [ ] prod-003.15: Resilience Scenario Tests + Integration
+- [ ] prod-003.16: Runbook Skeleton + Docs Updates
+
 - prod-002 (15): Real MEV (Flashbots + L2) — IN PROGRESS (002.01 - 002.06 completed: MOCK_MEV flag, secrets validation, Flashbots submission path via fetch, signed tx construction)
-- prod-003 (16): Ops/Resilience (health, circuits, graceful, alerts)
 - prod-004 (16): Full Verification (profitable paths, new prod-e2e-fork.test, recon/perf)
 - prod-005 (10): Docs/Closeout (runbooks, mermaid, checklist, final gate)
 
