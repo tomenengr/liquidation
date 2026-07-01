@@ -292,10 +292,10 @@ All use config.getChainConfig; preserve post-ticket. TDD in mevBundle + tests. N
 - prod-003.02: Structured Logger Module + Levels + Rotation  ✅ (logger.ts)  
 - prod-003.03: HTTP Health - prod-003.03: HTTP Health & Metrics Server Metrics Server  ✅ (/health, /metrics)  
 - prod-003.04-05: RPC Fallbacks List + Provider Pool + Automatic Failover  ✅  
-- prod-003.06: Circuit Breakers for Quoter / Subgraph / Bundle Submit  
-- prod-003.07: Nonce Management + Tx Replacement (bump)  
-- prod-003.08: Retries with Exp Backoff + Opportunity Deduplication  
-- prod-003.09: Graceful Shutdown (SIGTERM drain listeners/queue/DB/health)  
+- prod-003.06: Circuit Breakers for Quoter / Subgraph / Bundle Submit  ✅  
+- prod-003.07: Nonce Management + Tx Replacement (bump)  ✅  
+- prod-003.08: Retries with Exp Backoff + Opportunity Deduplication  ✅  
+- prod-003.09: Graceful Shutdown (SIGTERM drain listeners/queue/DB/health)  ✅  
 - prod-003.10: Boot-time Env Validation + Startup Checks  
 - prod-003.11: Process Supervisor Recommendations + package scripts (pm2/systemd/docker)  
 - prod-003.12: Alerting (ERROR + optional simple webhook)  

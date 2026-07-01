@@ -71,10 +71,10 @@ See full plan: `docs/superpowers/plans/2026-06-30-liquidation-improvement-plan.m
 - [x] prod-003.03: HTTP Health & Metrics Server
 - [x] prod-003.04: RPC Fallbacks List + Provider Pool
 - [x] prod-003.05: Automatic Failover Implementation
-- [ ] prod-003.06: Circuit Breakers for Quoter / Subgraph / Bundle Submit
-- [ ] prod-003.07: Nonce Management + Tx Replacement (bump)
-- [ ] prod-003.08: Retries with Exp Backoff + Opportunity Deduplication
-- [ ] prod-003.09: Graceful Shutdown
+- [x] prod-003.06: Circuit Breakers for Quoter / Subgraph / Bundle Submit
+- [x] prod-003.07: Nonce Management + Tx Replacement (bump)
+- [x] prod-003.08: Retries with Exp Backoff + Opportunity Deduplication
+- [x] prod-003.09: Graceful Shutdown
 - [ ] prod-003.10: Boot-time Env Validation + Startup Checks
 - [ ] prod-003.11: Process Supervisor Recommendations
 - [ ] prod-003.12: Alerting (ERROR + simple webhook)
