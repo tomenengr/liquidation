@@ -187,6 +187,13 @@ contract DynamicMock {
                                 console.log(`     [Tx Confirmed via executor] Block: ${receipt.blockNumber}, Gas Used: ${receipt.gasUsed}`);
                             }
 
+                            // prod-002.13: E2E coverage for MEV bundle path (simulated for Anvil)
+                            const { MevBundleSubmitter } = require('./mevBundle');
+                            const bundleSubmitter = new MevBundleSubmitter(config.RPC_URL, config.CHAIN_ID);
+                            console.log(`\n  -> 🚀 TESTING MEV BUNDLE PATH (Simulation)...`);
+                            const bundleRes = await bundleSubmitter.submitBundle(best, ticket);
+                            console.log(`     [MEV] ${bundleRes.success ? 'SUCCESS' : 'FAILED'} (attempts: ${bundleRes.attempts}) tx=${bundleRes.txHash || 'n/a'}`);
+
                             // Use enriched result from executor (001.07 parse of LiquidationExecuted + actual gas deduct + profitBase)
                             // (executor already logs MISSED / negative / pure vs ticket in enrich)
                             const profit = execResult.profit ?? 0n;

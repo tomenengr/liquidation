@@ -316,6 +316,17 @@ async function triggerEngine() {
                           const bundleSubmitter = new MevBundleSubmitter(tChainCfg.RPC_URL || config.RPC_URL, chainId);
                           const bundleRes = await bundleSubmitter.submitBundle(best, ticket);
                           console.log(`     Bundle: ${bundleRes.success ? '✅ SUCCESS' : '❌ FAILED'} after ${bundleRes.attempts} attempts`);
+
+                          // prod-002.14: MEV Metrics, Landed Profit Accounting
+                          if (bundleRes.success && (bundleRes as any).receipt) {
+                            try {
+                              const liquidator = await executor.getLiquidator();
+                              const enriched = executor.enrichWithParsedEventAndActuals((bundleRes as any).receipt, liquidator, best, ticket, reservesConfig);
+                              console.log(`     [MEV Metrics] Actual Profit USD=$${(Number(enriched.actualProfitBase)/1e8).toFixed(2)}, Pure Bonus=$${(Number((best as any).pureBonusBase)/1e8).toFixed(2)}, Gas Wei=${enriched.actualGasWei}`);
+                            } catch (e: any) {
+                              console.log(`     [MEV] ⚠️ Failed to enrich MEV receipt: ${e.message}`);
+                            }
+                          }
                         } else {
                           console.log(`     Bundle: skipped (dry-run/MOCK; sim kept in MevBundleSubmitter)`);
                         }

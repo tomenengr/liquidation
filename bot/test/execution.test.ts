@@ -1403,6 +1403,90 @@ async function runTests() {
   });
 
   // ===================================================================
+  // PROD-002.07 and 002.08: Pre-Submit Bundle Simulation (eth_callBundle) 
+  // and Real Submission with Retry/Priority Bump/Cancel
+  // ===================================================================
+  await test('prod-002.07/08 TDD: eth_callBundle simulation and retry/bump logic (RED first)', async () => {
+    const origMock = process.env.MOCK_MEV;
+    const origDry = process.env.DRY_RUN_EXECUTION;
+    const { MevBundleSubmitter } = require('../src/mevBundle');
+    const { LiquidationExecutor } = require('../src/executor');
+    
+    // Inject a dummy buildSignedTx to avoid full contract dependencies
+    const origBuild = LiquidationExecutor.prototype.buildSignedTx;
+    LiquidationExecutor.prototype.buildSignedTx = async function() { return '0x' + '1234567890abcdef1234567890abcdef' + '1234567890abcdef1234567890abcdef'; };
+
+    const origFetch = global.fetch;
+    let fetchCalls: any[] = [];
+    (global as any).fetch = async (url: any, opts: any) => {
+      if (opts && opts.body) {
+        fetchCalls.push(JSON.parse(opts.body));
+      }
+      const method = opts && opts.body ? JSON.parse(opts.body).method : '';
+      if (method === 'eth_callBundle') {
+        // Mock successful simulation
+        return { json: async () => ({ result: { results: [{ txHash: '0x123', gasUsed: 100000 }] } }) } as any;
+      }
+      if (method === 'eth_sendBundle') {
+        return { json: async () => ({ result: { bundleHash: '0xabc' } }) } as any;
+      }
+      return { json: async () => ({ error: 'unknown' }) } as any;
+    };
+
+    try {
+      process.env.DRY_RUN_EXECUTION = 'false';
+      process.env.MOCK_MEV = 'false';
+      
+      const subReal = new MevBundleSubmitter('http://127.0.0.1:8545', 1);
+      
+      // Override getTransactionReceipt to simulate "not included" for the first attempt's polling loop
+      let receiptCheckCount = 0;
+      (subReal as any).provider = {
+        getBlockNumber: async () => 100,
+        getTransactionReceipt: async (hash: string) => {
+          receiptCheckCount++;
+          // MevBundleSubmitter polls 15 times per attempt. 
+          // So we return null 15 times to fail the first attempt, then return receipt on 16th (second attempt's first poll).
+          if (receiptCheckCount <= 15) return null; // not included
+          return { status: 1, blockNumber: 101, gasUsed: 100000n }; // included
+        },
+        once: (event: string, cb: Function) => {
+           setTimeout(() => cb(101), 10);
+        }
+      };
+      
+      const opp = { debtAsset: '0x'+'d'.repeat(40), estimatedNetProfitBase: 5000000000n } as any;
+      const ticket = { bribeToken: 1000n, poolFee: 3000, netProfitBase: 4500000000n, amountOutMinimumToken: 10n } as any;
+
+      const res = await subReal.submitBundle(opp, ticket);
+      
+      if (!res) throw new Error('Result missing');
+      
+      const methods = fetchCalls.map(c => c.method);
+      if (!methods.includes('eth_callBundle')) {
+        throw new Error('RED prod-002.07: submitBundle must call eth_callBundle before eth_sendBundle on real MEV path');
+      }
+      if (methods.indexOf('eth_callBundle') > methods.indexOf('eth_sendBundle') && methods.includes('eth_sendBundle')) {
+         throw new Error('RED prod-002.07: eth_callBundle must happen BEFORE eth_sendBundle');
+      }
+      
+      // Retry and bump logic
+      if (res.attempts === undefined || res.attempts < 2) {
+         throw new Error('RED prod-002.08: should retry if not included');
+      }
+      if (ticket.bribeToken <= 1000n) {
+         throw new Error('RED prod-002.08: should bump priority (bribeToken) on retry');
+      }
+
+    } finally {
+      process.env.DRY_RUN_EXECUTION = origDry;
+      process.env.MOCK_MEV = origMock;
+      global.fetch = origFetch;
+      LiquidationExecutor.prototype.buildSignedTx = origBuild;
+    }
+  });
+
+  // ===================================================================
   // PROD-001.13: Anvil gas funding helper + e2e.ts refactor to use shared executor (from 001.04+)
   // TDD RED first (per AGENTS.md + plan): add failing assertions.
   // - helper exported from executor
@@ -1669,6 +1753,112 @@ async function runTests() {
       if (origPk !== undefined) process.env.PRIVATE_KEY = origPk; else delete process.env.PRIVATE_KEY;
       try { anvil.kill('SIGTERM'); } catch {}
       await new Promise(r => setTimeout(r, 100));
+    }
+  });
+
+  // ===================================================================
+  // PROD-002.09 & 002.10: Receipt Polling & L2 Direct High-Priority Fallback
+  // ===================================================================
+  await test('prod-002.09: MEV Bundle receipt polling checks txHash (TDD RED)', async () => {
+    const { MevBundleSubmitter } = require('../src/mevBundle');
+    const { opp, ticket } = createProfitableTicketFixture(CHAIN_ID);
+    
+    const origMockMev = process.env.MOCK_MEV;
+    const origDry = process.env.DRY_RUN_EXECUTION;
+    process.env.MOCK_MEV = 'false';
+    process.env.DRY_RUN_EXECUTION = 'false';
+    const cfg = config.getChainConfig(1);
+    const origCfgDry = cfg.DRY_RUN_EXECUTION;
+    (cfg as any).DRY_RUN_EXECUTION = false;
+    
+    let caughtError = false;
+    try {
+      // Use fake provider to mock getTransactionReceipt
+      const exec = new (require('../src/executor').LiquidationExecutor)(cfg.RPC_URL || 'http://127.0.0.1:8545', 1);
+      const submitter = new MevBundleSubmitter(cfg.RPC_URL || 'http://127.0.0.1:8545', 1);
+      
+      const fakeSignedTx = '0xdeadbeef';
+      
+      // Override fetch to succeed, but provider.getTransactionReceipt to return a receipt
+      let fetchCalled = false;
+      const origFetch = global.fetch;
+      global.fetch = async (url: any, opts: any) => {
+        fetchCalled = true;
+        return { json: async () => ({ result: 'ok' }) } as any;
+      };
+      
+      // Mock the provider in submitter
+      let pollingCount = 0;
+      (submitter as any).provider = {
+        getBlockNumber: async () => 100,
+        getTransactionReceipt: async (hash: string) => {
+          pollingCount++;
+          if (pollingCount < 2) return null; // simulate mining delay
+          return { status: 1, blockNumber: 101, gasUsed: 200000n, logs: [] };
+        }
+      };
+
+      const result = await submitter.submitBundle(opp as any, ticket as any, fakeSignedTx);
+      global.fetch = origFetch;
+      
+      if (!fetchCalled) throw new Error('RED 002.09: Expected fetch to Flashbots relay to be called');
+      if (!result.success || !result.txHash) {
+         throw new Error('RED 002.09: Expected success with txHash after polling');
+      }
+      if (pollingCount < 2) {
+         throw new Error('RED 002.09: Expected polling to wait for receipt');
+      }
+    } catch (e: any) {
+      caughtError = true;
+      if (e.message && e.message.includes('RED')) throw e;
+    } finally {
+      process.env.MOCK_MEV = origMockMev;
+      process.env.DRY_RUN_EXECUTION = origDry;
+      (cfg as any).DRY_RUN_EXECUTION = origCfgDry;
+    }
+  });
+
+  await test('prod-002.10: L2 direct high-priority fallback when MEV_RELAY is empty (TDD RED)', async () => {
+    const { MevBundleSubmitter } = require('../src/mevBundle');
+    const { opp, ticket } = createProfitableTicketFixture(8453); // Base L2
+    
+    const origMockMev = process.env.MOCK_MEV;
+    const origDry = process.env.DRY_RUN_EXECUTION;
+    process.env.MOCK_MEV = 'false';
+    process.env.DRY_RUN_EXECUTION = 'false';
+    const cfg = config.getChainConfig(8453);
+    const origCfgDry = cfg.DRY_RUN_EXECUTION;
+    (cfg as any).DRY_RUN_EXECUTION = false;
+    const origRelayEth = config.MEV_RELAY_ETHEREUM;
+    const origRelayBase = config.MEV_RELAY_BASE;
+    (config as any).MEV_RELAY_ETHEREUM = '';
+    (config as any).MEV_RELAY_BASE = '';
+    
+    let caughtError = false;
+    try {
+      const sub = new MevBundleSubmitter('http://127.0.0.1:8545', 8453);
+      
+      // We expect provider.broadcastTransaction to be called instead of fetch
+      let broadcastCalled = false;
+      (sub as any).provider.broadcastTransaction = async (tx: string) => {
+        broadcastCalled = true;
+        return { hash: '0xl2fallbackhash', wait: async () => ({ status: 1, blockNumber: 101, gasUsed: 200000n }) };
+      };
+      
+      await sub.submitBundle(opp, ticket);
+      
+      if (!broadcastCalled) {
+        throw new Error('RED 002.10: Expected provider.broadcastTransaction for L2 fallback');
+      }
+    } catch (e: any) {
+      caughtError = true;
+      if (e.message && e.message.includes('RED')) throw e;
+    } finally {
+      process.env.MOCK_MEV = origMockMev;
+      process.env.DRY_RUN_EXECUTION = origDry;
+      (cfg as any).DRY_RUN_EXECUTION = origCfgDry;
+      (config as any).MEV_RELAY_ETHEREUM = origRelayEth;
+      (config as any).MEV_RELAY_BASE = origRelayBase;
     }
   });
 

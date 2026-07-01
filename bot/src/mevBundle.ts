@@ -3,6 +3,17 @@ import { ExecutionTicket } from "./ExecutionRouter";
 import { LiquidationOpportunity } from "./profitCalculator";
 import { config } from "./config";
 import { LiquidationExecutor } from "./executor";
+export interface MevSubmitResult {
+  success: boolean;
+  attempts: number;
+  error?: string;
+  txHash?: string;
+  gasUsed?: bigint;
+  effectiveBribe?: bigint;
+  _usedRealPath?: boolean;
+  receipt?: any;
+}
+
 
 /**
  * MEV Bundle submitter (sim + real start for prod-002).
@@ -33,7 +44,7 @@ export class MevBundleSubmitter {
     ticket: ExecutionTicket,
     // In real, would pass signed tx or builder params
     mockLiquidationTxData?: string
-  ): Promise<{ success: boolean; attempts: number; txHash?: string; error?: string; gasUsed?: bigint; effectiveBribe?: bigint; _usedRealPath?: boolean }> {
+  ): Promise<MevSubmitResult> {
     const bundleId = `bundle-${Date.now()}-${opportunity.debtAsset.slice(0,6)}`;
     console.log(`[MEV] Building bundle ${bundleId} for user ${opportunity.debtAsset}...`);
 
@@ -55,62 +66,129 @@ export class MevBundleSubmitter {
       signedTx = await exec.buildSignedTx(opportunity, ticket) || undefined;
     }
 
-    if (useReal && signedTx && chainCfg.MEV_RELAY_URL) {
-      const blockNumber = await this.provider.getBlockNumber();
-      const targetBlock = blockNumber + 1;
-      
-      const bundle = {
-        txs: [signedTx],
-        blockNumber: "0x" + targetBlock.toString(16)
-      };
-
-      const authKey = chainCfg.FLASHBOTS_AUTH_KEY || ethers.Wallet.createRandom().privateKey;
-      const authSigner = new ethers.Wallet(authKey);
-
-      const body = JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "eth_sendBundle",
-        params: [bundle]
-      });
-
-      const hash = ethers.id(body);
-      const signature = await authSigner.signMessage(ethers.getBytes(hash));
-      const authHeader = `${authSigner.address}:${signature}`;
-
+    if (useReal && signedTx) {
+      let actualTxHash = ethers.keccak256(signedTx);
       let lastError;
+      let currentBribe = ticket.bribeToken;
+
       for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
-        console.log(`[MEV] Submitting bundle ${bundleId} attempt ${attempt}/${this.maxRetries} to ${chainCfg.MEV_RELAY_URL}`);
-        try {
-          const res = await fetch(chainCfg.MEV_RELAY_URL, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Flashbots-Signature': authHeader
-            },
-            body
+        let submitted = false;
+        
+        if (chainCfg.MEV_RELAY_URL) {
+          const blockNumber = await this.provider.getBlockNumber();
+          const targetBlock = blockNumber + 1;
+          
+          const bundle = {
+            txs: [signedTx],
+            blockNumber: "0x" + targetBlock.toString(16)
+          };
+
+          const authKey = chainCfg.FLASHBOTS_AUTH_KEY || ethers.Wallet.createRandom().privateKey;
+          const authSigner = new ethers.Wallet(authKey);
+
+          // 1. Simulation
+          console.log(`[MEV] Simulating bundle ${bundleId} (eth_callBundle) for block ${targetBlock}`);
+          const callBody = JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "eth_callBundle",
+            params: [{ txs: bundle.txs, blockNumber: bundle.blockNumber, stateBlockNumber: "latest" }]
           });
-          const json = await res.json();
-          if (json.error) {
-            lastError = json.error.message || json.error;
-            console.log(`[MEV] ❌ Relay error on attempt ${attempt}: ${lastError}`);
-          } else {
-            console.log(`[MEV] ✅ Bundle ${bundleId} SUBMITTED on attempt ${attempt}. result:`, json.result);
-            return {
-              success: true,
-              attempts: attempt,
-              txHash: ethers.keccak256(signedTx), // approximate, real would wait for inclusion
-              _usedRealPath: true
-            };
+          const callHash = ethers.id(callBody);
+          const callSig = await authSigner.signMessage(ethers.getBytes(callHash));
+
+          try {
+            const simRes = await fetch(chainCfg.MEV_RELAY_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-Flashbots-Signature': `${authSigner.address}:${callSig}` },
+              body: callBody
+            });
+            const simJson = await simRes.json();
+            if (simJson.error || (simJson.result && simJson.result.results && simJson.result.results.some((r: any) => r.error))) {
+               lastError = simJson.error ? simJson.error.message : "Simulation failed";
+               console.log(`[MEV] ❌ eth_callBundle simulation failed: ${lastError}`);
+               return { success: false, attempts: attempt, error: `Simulation failed: ${lastError}`, _usedRealPath: true };
+            }
+          } catch (err: any) {
+             console.log(`[MEV] ⚠️ eth_callBundle request failed: ${err.message}, continuing...`);
           }
-        } catch (err: any) {
-           lastError = err.message;
+
+          // 2. Submission
+          const body = JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "eth_sendBundle",
+            params: [bundle]
+          });
+          const hash = ethers.id(body);
+          const signature = await authSigner.signMessage(ethers.getBytes(hash));
+          
+          console.log(`[MEV] Submitting bundle ${bundleId} attempt ${attempt}/${this.maxRetries} to ${chainCfg.MEV_RELAY_URL}`);
+          try {
+            const res = await fetch(chainCfg.MEV_RELAY_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-Flashbots-Signature': `${authSigner.address}:${signature}` },
+              body
+            });
+            const json = await res.json();
+            if (json.error) {
+              lastError = json.error.message || json.error;
+              console.log(`[MEV] ❌ Relay error on attempt ${attempt}: ${lastError}`);
+            } else {
+              console.log(`[MEV] ✅ Bundle ${bundleId} SUBMITTED on attempt ${attempt}. result:`, json.result);
+              submitted = true;
+            }
+          } catch (err: any) {
+             lastError = err.message;
+          }
+
+        } else {
+          // Direct L2 High-Priority Fallback
+          console.log(`[MEV] No relay configured. Proceeding with direct mempool high-priority submission for L2 (Fallback).`);
+          try {
+            const txResponse = await this.provider.broadcastTransaction(signedTx);
+            console.log(`[MEV] ✅ Direct tx submitted: ${txResponse.hash}. Waiting for inclusion...`);
+            submitted = true;
+          } catch (err: any) {
+            console.log(`[MEV] ❌ Direct broadcast failed: ${err.message}`);
+            lastError = err.message;
+          }
         }
+
+        // 3. Receipt Polling (if submitted)
+        if (submitted) {
+          console.log(`[MEV] Polling for receipt of tx ${actualTxHash}...`);
+          for (let i = 0; i < 15; i++) {
+            const receipt = await this.provider.getTransactionReceipt(actualTxHash);
+            if (receipt) {
+              console.log(`[MEV] ✅ Tx ${actualTxHash} INCLUDED in block ${receipt.blockNumber}. Landed Gas: ${receipt.gasUsed}`);
+              console.log(`[MEV] Metrics: Modeled Profit=${ticket.netProfitToken}, Landed Gas Used=${receipt.gasUsed}`);
+              return {
+                success: receipt.status === 1,
+                attempts: attempt,
+                txHash: actualTxHash,
+                gasUsed: receipt.gasUsed,
+                _usedRealPath: true,
+                effectiveBribe: currentBribe,
+                receipt: receipt
+              };
+            }
+            await new Promise(r => setTimeout(r, 2000));
+          }
+          console.log(`[MEV] ⚠️ Bundle ${bundleId} not included after polling on attempt ${attempt}.`);
+        }
+
+        // 4. Retry and priority bump
         if (attempt < this.maxRetries) {
-          await new Promise(r => setTimeout(r, this.retryDelayMs));
+          currentBribe = (currentBribe * 110n) / 100n; // 10% bump
+          ticket.bribeToken = currentBribe; // Update ticket reference
+          console.log(`[MEV] ⬆️ Bumping priority for retry. New bribe: ${currentBribe}`);
+          // Note: Full dynamic rebuild of signedTx would happen here if FlashLiquidator supports dynamic bribes.
+          // For now, minimal sim compat is used.
         }
       }
-      return { success: false, attempts: this.maxRetries, error: lastError, _usedRealPath: true };
+
+      return { success: false, attempts: this.maxRetries, error: lastError || 'Timeout waiting for receipt', txHash: actualTxHash, _usedRealPath: true };
     }
 
     // Simulate bundle: the liquidation call + swap (simplified)

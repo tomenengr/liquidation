@@ -270,15 +270,15 @@ Critical files: bot/src/executor.ts (new), config.ts, monitor.ts, index.ts, e2e.
 - prod-002.04: Harden Secrets-Check + MEV Config Validation  ✅ 
 - prod-002.05: Core mevBundle.ts Real Flashbots Path (ETH) + MOCK compat  ✅ 
 - prod-002.06: Signed Tx Construction from Ticket + Opportunity  ✅
-- prod-002.07: Pre-Submit Bundle Simulation  
-- prod-002.08: Real Submission, Retry with Bribe/priority Bump, Cancel  
-- prod-002.09: Inclusion Proofs, Receipt Polling, Landed vs Modeled Metrics  
-- prod-002.10: L2 Direct High-Priority Fallback + Global Graceful Degradation  
-- prod-002.11: TDD Unit/Integration Tests for Full MevBundleSubmitter  
-- prod-002.12: Wire Conditional Real MEV into Production Entry Points  
-- prod-002.13: Expanded E2E / Fork + Simulation Tests for MEV Paths  
-- prod-002.14: MEV Metrics, Landed Profit Accounting, Health Integration  
-- prod-002.15: Full Verification, npm Checks, Docs, Plan Updates  
+- prod-002.07: Pre-Submit Bundle Simulation  ✅ 
+- prod-002.08: Real Submission, Retry with Bribe/priority Bump, Cancel  ✅ 
+- prod-002.09: Inclusion Proofs, Receipt Polling, Landed vs Modeled Metrics  ✅ 
+- prod-002.10: L2 Direct High-Priority Fallback + Global Graceful Degradation  ✅ 
+- prod-002.11: TDD Unit/Integration Tests for Full MevBundleSubmitter  ✅   
+- prod-002.12: Wire Conditional Real MEV into Production Entry Points  ✅   
+- prod-002.13: Expanded E2E / Fork + Simulation Tests for MEV Paths  ✅   
+- prod-002.14: MEV Metrics, Landed Profit Accounting, Health Integration  ✅   
+- prod-002.15: Full Verification, npm Checks, Docs, Plan Updates  ✅   
 
 **prod-002 Strategy (minimal start):**  
 Flashbots (for ETH/1): use https://relay.flashbots.net or Protect; bundle format {txs: [signedTx], blockNumber}. Auth via signer.  

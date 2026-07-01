@@ -216,7 +216,7 @@ export class LiquidationExecutor {
 
     // prod-002: If real MEV is active, we skip public mempool broadcast.
     // The caller (index/monitor) will use MevBundleSubmitter which calls buildSignedTx.
-    const useMev = chainCfg.MOCK_MEV === false && !!chainCfg.MEV_RELAY_URL;
+    const useMev = chainCfg.MOCK_MEV === false;
     if (useMev) {
       console.log(`[LiquidationExecutor] 🚀 MEV active (MOCK_MEV=false); skipping mempool broadcast (deferred to MevBundleSubmitter)`);
       return {
@@ -302,7 +302,7 @@ export class LiquidationExecutor {
    * compare to ticket, log pureBonus vs actual. Multi-chain safe.
    * Never hardcodes addresses (uses config + passed data).
    */
-  private enrichWithParsedEventAndActuals(
+  public enrichWithParsedEventAndActuals(
     receipt: any,
     liquidator: ethers.Contract,
     opportunity: LiquidationOpportunity,

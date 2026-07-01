@@ -180,6 +180,18 @@ async function triggerEngine() {
           const bundleResult = await bundleSubmitter.submitBundle(best, ticket);
           logOpp(`Bundle: ${bundleResult.success ? 'SUCCESS' : 'FAILED'} after ${bundleResult.attempts} attempts`, bundleResult);
 
+          // prod-002.14: MEV Metrics, Landed Profit Accounting
+          if (bundleResult.success && (bundleResult as any).receipt) {
+            try {
+              const liquidator = await executor.getLiquidator();
+              const enriched = executor.enrichWithParsedEventAndActuals((bundleResult as any).receipt, liquidator, best, ticket, reservesConfig);
+              Object.assign(bundleResult, enriched);
+              logOpp(`MEV Landed Metrics: Actual Profit USD=$${(Number(enriched.actualProfitBase)/1e8).toFixed(2)}, Pure Bonus=$${(Number((best as any).pureBonusBase)/1e8).toFixed(2)}, Gas Wei=${enriched.actualGasWei}`);
+            } catch (e: any) {
+              console.log(`[MEV] ⚠️ Failed to enrich MEV receipt: ${e.message}`);
+            }
+          }
+
           // Persistence for opportunities (1.13)
           try {
             const oppLog = {time: new Date().toISOString(), user: pos.user, ticket, bundle: bundleResult};
