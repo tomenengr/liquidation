@@ -75,10 +75,10 @@ See full plan: `docs/superpowers/plans/2026-06-30-liquidation-improvement-plan.m
 - [x] prod-003.07: Nonce Management + Tx Replacement (bump)
 - [x] prod-003.08: Retries with Exp Backoff + Opportunity Deduplication
 - [x] prod-003.09: Graceful Shutdown
-- [ ] prod-003.10: Boot-time Env Validation + Startup Checks
-- [ ] prod-003.11: Process Supervisor Recommendations
-- [ ] prod-003.12: Alerting (ERROR + simple webhook)
-- [ ] prod-003.13: Extend Recon Alerts + Auto Dirty-Mark on Lag
+- [x] prod-003.10: Boot-time Env Validation + Startup Checks
+- [x] prod-003.11: Process Supervisor Recommendations
+- [x] prod-003.12: Alerting (ERROR + simple webhook)
+- [x] prod-003.13: Extend Recon Alerts + Auto Dirty-Mark on Lag
 - [ ] prod-003.14: Resource / Memory Guards + Backpressure Enhancements
 - [ ] prod-003.15: Resilience Scenario Tests + Integration
 - [ ] prod-003.16: Runbook Skeleton + Docs Updates
