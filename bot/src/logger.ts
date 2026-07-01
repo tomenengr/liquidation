@@ -1,3 +1,4 @@
+import { AlertManager } from "./alerting";
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -50,6 +51,7 @@ export class Logger {
     if (this.useConsole) {
       if (level === LogLevel.ERROR) {
         console.error(logLine);
+        AlertManager.sendAlert("ERROR", message, meta).catch(() => {});
       } else if (level === LogLevel.WARN) {
         console.warn(logLine);
       } else {

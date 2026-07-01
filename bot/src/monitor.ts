@@ -1,3 +1,4 @@
+import { AlertManager } from "./alerting";
 import { globalOpportunityCache } from './dedup';
 import { ethers } from "ethers";
 import { Feeder } from "../test/Feeder";
@@ -80,17 +81,17 @@ function getRecentVolatilityPercent(asset: string): number {
 
 // Users sourced EXCLUSIVELY from hybrid DB/subgraph (Problem 4 fix).
 // No static/hardcoded lists. loadAtRisk... populates; events can dynamically extend.
-let USERS: string[] = [];
+export let USERS: string[] = [];
 
 let reservesConfig = new Map<string, ReserveDataView>();
-let userPositions: UserPositionView[] = [];
+export let userPositions: UserPositionView[] = [];
 let currentTimestamp = 0n;
 
 // Throttle recalculations so we don't recalculate 50 times in one block
 let recalculationQueued = false;
 
 // Track users currently being refetched to avoid redundant RPC calls
-const dirtyUsers = new Set<string>();
+export const dirtyUsers = new Set<string>();
 
 async function refetchDirtyUser(user: string) {
     if (dirtyUsers.has(user)) return; // Already fetching
@@ -355,7 +356,7 @@ async function triggerEngine() {
     }
 }
 
-async function startReconciliationLoop() {
+export async function startReconciliationLoop() {
     const reconCfg = config;
     console.log(`🔄 Starting Production Reconciliation Loop (interval=${reconCfg.RECONCILIATION_INTERVAL_MS}ms, persistence=${reconCfg.RECONCILIATION_LOG_FILE})...`);
     
@@ -427,10 +428,13 @@ async function startReconciliationLoop() {
         const tol = reconCfg.RECONCILIATION_COL_DEBT_TOLERANCE;
         if (hfDiff > hfTol || colDiff > tol || debtDiff > tol) {
             console.error(`❌ [ALERT] State Sync drifted beyond tolerance! HF:${hfDiff} Col:${colDiff} Debt:${debtDiff}`);
-            // 3.11: could alert more
+            AlertManager.sendAlert("CRITICAL_DRIFT", `State Sync drifted beyond tolerance for ${targetUser}`, { hfDiff: hfDiff.toString(), colDiff: colDiff.toString(), debtDiff: debtDiff.toString() }).catch(() => {});
+            refetchDirtyUser(targetUser).catch(console.error);
         }
         if (dbHfDiff > hfTol) {
           console.error(`❌ [ALERT] DB drift > tol: ${dbHfDiff}`);
+          AlertManager.sendAlert("CRITICAL_DB_DRIFT", `DB drift > tol for ${targetUser}`, { dbHfDiff: dbHfDiff.toString() }).catch(() => {});
+          refetchDirtyUser(targetUser).catch(console.error);
         }
     }, reconCfg.RECONCILIATION_INTERVAL_MS);
 
