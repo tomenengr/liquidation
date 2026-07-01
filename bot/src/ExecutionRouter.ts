@@ -37,7 +37,7 @@ const BPS_DENOMINATOR = 10000n;
  * - Integrated with subgraph data via loadEngineViewsFromSubgraph in callers/tests.
  */
 export class ExecutionRouter {
-    provider: ethers.JsonRpcProvider;
+    provider: ethers.Provider;
     quoter: ethers.Contract;
     wethAddress: string;
     flashloanFeeBps: bigint;
@@ -51,7 +51,7 @@ export class ExecutionRouter {
         this.chainId = id;
         // Use provided rpcUrl (allows caller to pass anvil fork or live), fallback to chainCfg (which does key pattern derive)
         const effectiveRpc = rpcUrl || chainCfg.RPC_URL || config.RPC_URL;
-        this.provider = new ethers.JsonRpcProvider(effectiveRpc);
+        this.provider = createProviderPool(effectiveRpc, chainConfig.RPC_FALLBACKS);
         this.quoter = new ethers.Contract(addrs.UNISWAP_QUOTER_V2, QUOTER_V2_ABI, this.provider);
         this.wethAddress = addrs.WETH.toLowerCase();
         this.flashloanFeeBps = chainCfg.FLASHLOAN_FEE_BPS || config.FLASHLOAN_FEE_BPS;
