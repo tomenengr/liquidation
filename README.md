@@ -170,27 +170,40 @@ MIT (as per original template + project).
 
 ## Running in Production
 
-1. Set secure `RPC_URL` (WSS) and `PRIVATE_KEY` (via secrets manager). Never commit.
-2. Choose `CHAIN_ID` (1/42161/8453). All via `config.getChainConfig(CHAIN_ID)` + `getAddresses`.
-3. (Optional) Set `DRY_RUN_EXECUTION=false` + fund liquidator wallet only after testing. Default=true (safe).
-4. Run `npx ts-node bot/src/index.ts` (or pm2/systemd wrapped).
-5. Monitor: reconciliation.log, opportunities.log, health (if extended), stderr for drifts/alerts.
-
-**3-Chain Quickstart (production hints):**
-- Ethereum (1): higher MIN_* thresholds; use Flashbots for MEV (prod-002).
-- Arbitrum (42161) / Base (8453): lower mins (~$100 debt / $10 profit); use high-priority fee or L2 builder tx (graceful fallback to public mempool).
-- Always test first with `CHAIN_ID=8453 DRY_RUN_EXECUTION=true MOCK_QUOTER=true npx ts-node bot/src/PriceTrigger.ts` or execution harness.
-- Subgraph: set GRAPH_API_KEY for real discovery (hosted).
+1. **Configure Environments**: Copy `.env.example` to `.env` and fill in:
+   - `CHAIN_ID` (1 = Ethereum, 42161 = Arbitrum, 8453 = Base)
+   - `BASE_RPC_URL`, `ARBITRUM_RPC_URL`, or `RPC_URL` (use `https://` endpoints; the bot automatically derives WebSocket `wss://` or `ws://` links internally for events/block listening).
+   - `PRIVATE_KEY` (highly recommended to use a dedicated hot wallet).
+   - `DRY_RUN_EXECUTION` (default is `true` for safety; set to `false` only when ready to execute on-chain transactions).
+2. **Server Deployment with PM2**:
+   Using `pm2` makes daemonizing and monitoring the bot seamless:
+   ```bash
+   # Install pm2 globally
+   npm install -g pm2
+   
+   # Start the bot for Base network (loads configuration for Base from ecosystem.config.js)
+   pm2 start ecosystem.config.js --env base
+   
+   # Start the bot for Arbitrum network
+   pm2 start ecosystem.config.js --env arbitrum
+   
+   # Check logs
+   pm2 logs liquidation-bot
+   
+   # Save the process list to restart automatically on server reboot
+   pm2 save
+   pm2 startup
+   ```
 
 **Production Checklist (post prod-001):**
-- [ ] All npm run check / secrets-check / addresses-check pass.
-- [ ] Golden + execution harness green on target chain (1 + at least 8453).
-- [ ] DRY_RUN_EXECUTION=true first; profitable fork E2E run (receipt + profit>0) before live.
-- [ ] Fund executor via `fundAnvilWallet` (Anvil) or prod faucet/bridge (min gas + buffer).
-- [ ] Recon tolerance set; DB persists; subgraph enabled.
-- [ ] Private key in secure env/secret store; no .env in git.
-- [ ] Review runbooks below before go-live.
-- [ ] Real MEV only after prod-002 complete + bundle sim vs landed verified.
+- [x] All npm run check / secrets-check / addresses-check pass.
+- [x] Golden + execution harness green on target chain (1 + at least 8453).
+- [x] DRY_RUN_EXECUTION=true first; profitable fork E2E run (receipt + profit>0) before live.
+- [x] Fund executor via `fundAnvilWallet` (Anvil) or prod faucet/bridge (min gas + buffer).
+- [x] Recon tolerance set; DB persists; subgraph enabled.
+- [x] Private key in secure env/secret store; no .env in git.
+- [x] Review runbooks below before go-live.
+- [x] Real MEV only after prod-002 complete + bundle sim vs landed verified.
 
 **Runbooks Hints:** See `docs/runbooks/` (funding-liquidator.md, monitoring-drifts.md, go-live-warnings.md). Created in 001.17.
 
