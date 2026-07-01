@@ -18,6 +18,7 @@ import { initDb } from './db';
 import { bulkSyncFromSubgraph, loadAtRiskAddressesFromDb } from './stateSync';
 import { HealthServer } from './health';
 import { setupGracefulShutdown } from './shutdown';
+import { validateStartup } from './startup';
 
 // Production Liquidation Bot - Advanced Engine Integration (Task 1.5 + Problem 4)
 // Uses: advanced state (hybrid DB/subgraph users like monitor) + 0-RPC calc + ExecutionRouter
@@ -221,6 +222,7 @@ async function triggerEngine() {
 }
 
 async function startProduction() {
+  validateStartup(config.getChainConfig());
   await coldStart();
 
   console.log("🟢 [Prod] Advanced Liquidation Bot started (using monitor + calc + router)");
