@@ -15,6 +15,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { initDb } from './db';
 import { bulkSyncFromSubgraph, loadAtRiskAddressesFromDb } from './stateSync';
+import { HealthServer } from './health';
+import { setupGracefulShutdown } from './shutdown';
 
 // Production Liquidation Bot - Advanced Engine Integration (Task 1.5 + Problem 4)
 // Uses: advanced state (hybrid DB/subgraph users like monitor) + 0-RPC calc + ExecutionRouter
@@ -217,6 +219,18 @@ async function startProduction() {
   await coldStart();
 
   console.log("🟢 [Prod] Advanced Liquidation Bot started (using monitor + calc + router)");
+
+  const healthServer = new HealthServer(config.HEALTH_PORT);
+  await healthServer.start();
+  console.log(`[Prod] Health server running on port ${config.HEALTH_PORT}`);
+
+  setupGracefulShutdown(healthServer, 3000, [
+    async () => {
+      await healthServer.stop();
+      console.log('[Prod] Health server stopped.');
+    }
+  ]);
+
 
   // Listen for on-chain updates (same pattern as advanced monitor)
   pool.on("ReserveDataUpdated", () => queueRecalculation());

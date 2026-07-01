@@ -4,6 +4,7 @@ export class HealthServer {
   private port: number;
   private server: http.Server | null = null;
   private metrics: Record<string, any> = {};
+  public isShuttingDown: boolean = false;
 
   constructor(port: number) {
     this.port = port;
@@ -13,12 +14,21 @@ export class HealthServer {
     this.metrics[key] = value;
   }
 
+  public setShuttingDown() {
+    this.isShuttingDown = true;
+  }
+
   public async start(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.server = http.createServer((req, res) => {
         if (req.method === 'GET' && req.url === '/health') {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ status: 'ok', timestamp: Date.now() }));
+          if (this.isShuttingDown) {
+            res.writeHead(503, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'shutting_down', timestamp: Date.now() }));
+          } else {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'ok', timestamp: Date.now() }));
+          }
         } else if (req.method === 'GET' && req.url === '/metrics') {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(this.metrics));
