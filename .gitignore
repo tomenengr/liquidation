@@ -7,3 +7,4 @@ bot/node_modules/
 bot/data/
 bot/dist/
 .DS_Store
+bot-data.db*

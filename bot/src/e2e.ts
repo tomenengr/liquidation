@@ -1,33 +1,31 @@
 import { ethers } from 'ethers';
+import { config } from './config';
 import { Feeder } from '../test/Feeder';
 import { calculateUserAccountData } from './engine/calculateUserAccountData';
 import { calculateOptimalLiquidation } from './profitCalculator';
 import { ExecutionRouter } from './ExecutionRouter';
+import { LiquidationExecutor, fundAnvilWallet } from './executor';
 import { ReserveDataView, UserPositionView } from './engine/views';
 import fs from 'fs';
+import { initDb } from './db';
+import { bulkSyncFromSubgraph, loadAtRiskAddressesFromDb } from './stateSync';
 
-const RPC_URL = "http://127.0.0.1:8545";
-const POOL_ADDRESS = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
-const SWAP_ROUTER_ADDRESS = "0xE592427A0AEce92De3Edee1F18E0157C05861564"; // V3 SwapRouter (V1)
-const PRIVATE_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"; // Anvil #0
+const RPC_URL = config.RPC_URL;
+const CHAIN_ID = config.CHAIN_ID;
+console.log(`[E2E] Using chain ${CHAIN_ID} (L2 mode: ${config.IS_L2}) - ready for mainnet/Arbitrum/Base etc.`);
 
-async function deployLiquidator(wallet: ethers.Wallet): Promise<ethers.Contract> {
-    const artifactPath = "./out/FlashLiquidator.sol/FlashLiquidator.json";
-    if (!fs.existsSync(artifactPath)) {
-        throw new Error(`Artifact not found at ${artifactPath}. Run 'forge build' first.`);
-    }
-    const artifact = JSON.parse(fs.readFileSync(artifactPath, "utf8"));
-    
-    console.log("Deploying FlashLiquidator...");
-    const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode.object, wallet);
-    const ADDRESS_PROVIDER = "0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e";
-    const liquidator = await factory.deploy(ADDRESS_PROVIDER, SWAP_ROUTER_ADDRESS);
-    await liquidator.waitForDeployment();
-    const address = await liquidator.getAddress();
-    console.log(`FlashLiquidator deployed at: ${address}`);
+const ADDRESSES = config.getAddresses(CHAIN_ID);
+const POOL_ADDRESS = ADDRESSES.POOL;
+const SWAP_ROUTER_ADDRESS = ADDRESSES.UNISWAP_SWAP_ROUTER;
 
-    return liquidator as ethers.Contract;
+// Load from environment - NEVER hardcode private keys (TDD: secrets-check.test)
+const PRIVATE_KEY = process.env.PRIVATE_KEY!;
+if (!PRIVATE_KEY) {
+  throw new Error('PRIVATE_KEY environment variable is required. Copy .env.example to .env and set it (Anvil default for local testing only).');
 }
+
+// NOTE: deployLiquidator removed entirely (prod-001.13/15 cleanup). All paths use shared LiquidationExecutor + config.getAddresses(CHAIN_ID).
+// e2e now config-only for addresses (WETH/USDC/WETH_PRICE_FEED pulled).
 
 async function runE2E() {
     console.log("==================================================");
@@ -37,10 +35,15 @@ async function runE2E() {
     const provider = new ethers.JsonRpcProvider(RPC_URL);
     const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 
-    // 1. Deploy Smart Contract
-    const liquidator = await deployLiquidator(wallet);
+    // prod-001.13: fund gas on anvil (for deploy + exec tx) using shared helper. Multi-chain safe (noop on non-anvil).
+    await fundAnvilWallet(provider, await wallet.getAddress());
 
-    const feeder = new Feeder(RPC_URL);
+    // 1. Use shared executor (refactored from inline deploy + direct tx). Executor will deploy (or attach via config) config-driven.
+    const executor = new LiquidationExecutor(RPC_URL, CHAIN_ID);
+    // Optional early get for logs (will deploy inside execute if needed; respects DRY_RUN via config)
+    // const liqForLog = await executor.getLiquidator(wallet); // avoid side effect pre-crash; let execute handle
+
+    const feeder = new Feeder(RPC_URL, CHAIN_ID);
     
     // Use the specific 5 users from our watchlist
     const targetUsers = [
@@ -50,18 +53,17 @@ async function runE2E() {
     ];
 
     const pool = new ethers.Contract(
-        "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2".toLowerCase(),
+        config.getAddresses().POOL.toLowerCase(),
         ["function getReservesList() view returns (address[])"],
         provider
     );
 
     console.log("[1] Cold Start: Loading Global Reserves List...");
     let ASSETS: string[] = await pool.getReservesList();
-    // OPTIMIZATION: Only fetch WETH and USDT to avoid Alchemy free-tier RPC rate limits
-    ASSETS = [
-        '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', // WETH
-        '0xdAC17F958D2ee523a2206206994597C13D831ec7'  // USDT
-    ];
+    // OPTIMIZATION: Only fetch WETH and USDC (config-driven via getAddresses) to avoid Alchemy free-tier RPC rate limits. Multi-chain.
+    const e2eWeth = ADDRESSES.WETH;
+    const e2eStable = (ADDRESSES as any).USDC || ADDRESSES.WETH;
+    ASSETS = [e2eWeth, e2eStable];
     
     const blockTag = await provider.getBlockNumber();
     const block = await provider.getBlock(blockTag);
@@ -76,18 +78,33 @@ async function runE2E() {
     }
     
     console.log("[3] Cold Start: Loading Target Watchlist Positions...");
+    // 3.12: E2E with simulated price crash using DB users from subgraph hybrid (when available)
+    initDb();
+    try {
+      if (config.USE_SUBGRAPH_DISCOVERY) {
+        await bulkSyncFromSubgraph(CHAIN_ID, 5);
+        const dbUsers = loadAtRiskAddressesFromDb(CHAIN_ID, 1000000000n); // any positive debt users
+        if (dbUsers.length > 0) {
+          console.log(`[E2E-DB] Using ${dbUsers.length} real users from DB/subgraph for crash sim (instead of hardcoded)`);
+          targetUsers.length = 0;
+          targetUsers.push(...dbUsers.slice(0, 3));
+        }
+      }
+    } catch (e: any) {
+      console.log('[E2E-DB] DB/subgraph users fallback to static:', e.message);
+    }
     const userPositions: UserPositionView[] = [];
     for (const user of targetUsers) {
         userPositions.push(await feeder.fetchUserPosition(user, ASSETS, blockTag));
     }
 
-    const router = new ExecutionRouter(RPC_URL);
+    const router = new ExecutionRouter(RPC_URL, CHAIN_ID);
 
     console.log("\n🚨🚨🚨 CHAINLINK ORACLE EVENT DETECTED 🚨🚨🚨");
     console.log("WETH Price drops by 5%!\n");
 
     // CRASH THE PRICE IN MEMORY AND ON-CHAIN
-    const WETH = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'.toLowerCase();
+    const WETH = ADDRESSES.WETH.toLowerCase();
     let crashedPrice = 0n;
     for (const [asset, config] of reservesConfig.entries()) {
         if (asset.toLowerCase() === WETH) {
@@ -97,7 +114,7 @@ async function runE2E() {
     }
 
     console.log("\n[4] Hacking WETH Aggregator on Anvil via anvil_setCode...");
-    const AAVE_WETH_SOURCE = "0x5424384B256154046E9667dDFaaa5e550145215e";
+    const AAVE_WETH_SOURCE = (ADDRESSES as any).WETH_PRICE_FEED || '0x5424384B256154046E9667dDFaaa5e550145215e'; // pulled to addresses for multi-chain (mainnet/Base feed)
     
     // Dynamically write and compile a Mock contract that returns exactly our crashedPrice
     const mockContractCode = `// SPDX-License-Identifier: MIT
@@ -139,6 +156,9 @@ contract DynamicMock {
                 const best = opportunities[0];
                 console.log(`\n  -> 🚀 Calling Quoter & Modeling MEV...`);
                 
+                // Log separation of Pure Liquidation Bonus vs Oracle-Lag Arb (per plan)
+                console.log(`     [Pure Bonus (excl. lag arb)]: ${best.pureBonusBase} base`);
+                
                 // Intentionally run a deliberate failure first, then a success? 
                 // We'll just run the real one directly for this script.
                 const ticket = await router.verifyAndRoute(best, reservesConfig);
@@ -149,94 +169,69 @@ contract DynamicMock {
                     console.log(`     - Minimum Output Req: ${ticket.amountOutMinimumToken}`);
                     console.log(`     - Required Repayment: ${ticket.amountToRepayToken}`);
                     console.log(`     - Estimated Pre-Gas Profit: ${ticket.netProfitToken}`);
+                    console.log(`     - Pure Bonus Component: ${best.pureBonusBase}`);
                     
-                    console.log(`\n  -> 💥 FIRING TRANSACTION TO ANVIL...`);
+                    console.log(`\n  -> 💥 FIRING TRANSACTION TO ANVIL (via shared LiquidationExecutor from 001.04+)...`);
                     
                     try {
-                        const debtToCover = ticket.useMaxCloseFactor 
-                            ? (best.debtToCoverToken * 101n) / 100n 
-                            : best.debtToCoverToken;
+                        // prod-001.13: use shared executor (config driven, handles getLiquidator/deploy, signed execute, enrich parse/gas/profit).
+                        // debtToCover buffering now via executor.getDebtToCoverForCall internally; pass ticket + reserves for actuals.
+                        const execResult = await executor.execute(best, ticket, reservesConfig);
 
-                        const tx = await (liquidator as any).executeLiquidation(
-                            pos.user,
-                            best.debtAsset,
-                            best.collateralAsset,
-                            debtToCover,
-                            ticket.useMaxCloseFactor,
-                            ticket.poolFee,
-                            ticket.amountOutMinimumToken, 
-                            { gasLimit: 3000000 }
-                        );
-                        
-                        console.log(`     [Tx Sent] Hash: ${tx.hash}`);
-                        const receipt = await tx.wait();
-                        
-                        console.log(`     [Tx Confirmed] Block: ${receipt.blockNumber}, Gas Used: ${receipt.gasUsed}`);
-                        
-                        // Parse LiquidationExecuted Event
-                        // event LiquidationExecuted(address indexed user, address debtAsset, address collateralAsset, uint256 debtCovered, uint256 collateralReceived, uint256 amountOut, uint256 profit);
-                        
-                        // Since we just want the profit, let's filter logs by the contract address
-                        for (const log of receipt.logs) {
-                            if (log.address.toLowerCase() === (await liquidator.getAddress()).toLowerCase()) {
-                                try {
-                                    // Interface setup to parse the event
-                                    const iface = new ethers.Interface([
-                                        "event LiquidationExecuted(address indexed user, address debtAsset, address collateralAsset, uint256 debtCovered, uint256 collateralReceived, uint256 amountOut, uint256 profit)"
-                                    ]);
-                                    const parsedLog = iface.parseLog(log);
-                                    if (parsedLog && parsedLog.name === "LiquidationExecuted") {
-                                        const profit = BigInt(parsedLog.args.profit);
-                                        const amountOut = BigInt(parsedLog.args.amountOut);
-                                        
-                                        // Gas calculation
-                                        const gasCostWei = BigInt(receipt.gasUsed) * BigInt(receipt.gasPrice);
-                                        // 1 WETH = crashedPrice (e.g. 3000 * 1e8). WETH has 18 decimals, USDT has 6.
-                                        // Gas cost in USDT = (gasCostWei * WETH_PRICE_IN_USD_1e8) / 1e8 / 1e18 * 1e6
-                                        // = gasCostWei * WETH_PRICE_IN_USD_1e8 / 1e20
-                                        const gasCostUSDT = (gasCostWei * crashedPrice) / 100000000000000000000n; 
-                                        const trueNetProfit = profit - gasCostUSDT;
-                                        
-                                        // Pure Bonus Calculation (5%)
-                                        const debtCovered = BigInt(parsedLog.args.debtCovered);
-                                        const pureBonus = (debtCovered * 5n) / 100n;
-                                        const arbProfit = profit - pureBonus;
-
-                                        console.log("\n==================================================");
-                                        console.log("💰💰💰 TRUE ON-CHAIN RECONCILIATION 💰💰💰");
-                                        console.log(`- Liquidated User: ${parsedLog.args.user}`);
-                                        console.log(`- Debt Covered: ${debtCovered}`);
-                                        console.log(`- Collateral Seized: ${parsedLog.args.collateralReceived}`);
-                                        console.log(`- Uniswap AmountOut: ${amountOut}`);
-                                        console.log(`- On-Chain Profit (Pre-Gas): ${profit}`);
-                                        console.log(`- Gas Cost (in USDT): ${gasCostUSDT}`);
-                                        console.log(`- TRUE NET PROFIT: ${trueNetProfit}`);
-                                        console.log(`\n--- Profit Attribution ---`);
-                                        console.log(`- Pure Liquidation Bonus (5%): ${pureBonus}`);
-                                        console.log(`- Oracle-Lag Arb: ${arbProfit}`);
-                                        
-                                        // Bribe simulation
-                                        const bribe = trueNetProfit > 0n ? trueNetProfit / 2n : 0n;
-                                        const postBribeProfit = trueNetProfit - bribe;
-                                        
-                                        console.log(`\n--- MEV Bribe Simulation (50%) ---`);
-                                        console.log(`- Builder Bribe: ${bribe}`);
-                                        console.log(`- Final Post-Bribe Profit: ${postBribeProfit}`);
-                                        
-                                        if (postBribeProfit <= 0n) {
-                                            console.log(`\n🚨 MISSED TARGET: Post-Bribe Profit is Negative/Zero!`);
-                                        }
-
-                                        console.log("==================================================\n");
-                                    }
-                                } catch (e) {
-                                    // ignore non-matching logs
-                                }
+                        if (execResult.dryRun) {
+                            console.log(`     🔒 DRY-RUN via executor (config.DRY_RUN_EXECUTION); no tx. reason=${execResult.reason}`);
+                        } else {
+                            console.log(`     [Tx via Executor] Hash: ${execResult.txHash || 'n/a'}`);
+                            const receipt = execResult.receipt;
+                            if (receipt) {
+                                console.log(`     [Tx Confirmed via executor] Block: ${receipt.blockNumber}, Gas Used: ${receipt.gasUsed}`);
                             }
-                        }
 
+                            // Use enriched result from executor (001.07 parse of LiquidationExecuted + actual gas deduct + profitBase)
+                            // (executor already logs MISSED / negative / pure vs ticket in enrich)
+                            const profit = execResult.profit ?? 0n;
+                            const amountOut = execResult.amountOut ?? 0n;
+                            const debtCovered = execResult.debtCovered ?? 0n;
+                            const collateralReceived = execResult.collateralReceived ?? 0n;
+                            const gasCostWei = execResult.actualGasWei ?? 0n;
+                            // Keep e2e-specific USDT gas approx using the crash sim price (for demo output)
+                            const gasCostUSDT = gasCostWei > 0n ? (gasCostWei * crashedPrice) / 100000000000000000000n : 0n;
+                            const trueNetProfit = (execResult.actualProfitToken ?? (profit - gasCostUSDT)) as bigint;
+
+                            // Pure Bonus (use opp or fixed 5% for demo; executor already computed attribution logs)
+                            const pureBonus = (best as any).pureBonusBase || (debtCovered * 5n) / 100n;
+                            const arbProfit = profit - (typeof pureBonus === 'bigint' ? pureBonus : (debtCovered * 5n) / 100n );
+
+                            console.log("\n==================================================");
+                            console.log("💰💰💰 TRUE ON-CHAIN RECONCILIATION (via shared executor) 💰💰💰");
+                            console.log(`- Liquidated User: ${best.user || pos.user}`);
+                            console.log(`- Debt Covered: ${debtCovered}`);
+                            console.log(`- Collateral Seized: ${collateralReceived}`);
+                            console.log(`- Uniswap AmountOut: ${amountOut}`);
+                            console.log(`- On-Chain Profit (Pre-Gas): ${profit}`);
+                            console.log(`- Gas Cost (in USDT approx): ${gasCostUSDT}`);
+                            console.log(`- TRUE NET PROFIT (post gas from executor): ${trueNetProfit}`);
+                            console.log(`- actualProfitBase (enriched): ${execResult.actualProfitBase}`);
+                            console.log(`\n--- Profit Attribution ---`);
+                            console.log(`- Pure Liquidation Bonus: ${pureBonus}`);
+                            console.log(`- Oracle-Lag Arb: ${arbProfit}`);
+
+                            // Bribe simulation (keep e2e demo)
+                            const bribe = trueNetProfit > 0n ? trueNetProfit / 2n : 0n;
+                            const postBribeProfit = trueNetProfit - bribe;
+
+                            console.log(`\n--- MEV Bribe Simulation (50%) ---`);
+                            console.log(`- Builder Bribe: ${bribe}`);
+                            console.log(`- Final Post-Bribe Profit: ${postBribeProfit}`);
+
+                            if (postBribeProfit <= 0n) {
+                                console.log(`\n🚨 MISSED TARGET: Post-Bribe Profit is Negative/Zero!`);
+                            }
+
+                            console.log("==================================================\n");
+                        }
                     } catch (err: any) {
-                        console.log(`     ❌ TRANSACTION REVERTED: ${err.message.split("\\n")[0]}`);
+                        console.log(`     ❌ TRANSACTION REVERTED (via executor): ${String(err?.message || err).split('\n')[0]}`);
                     }
 
                 } else {

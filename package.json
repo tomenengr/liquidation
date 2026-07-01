@@ -8,12 +8,29 @@
     "test": "test"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "forge test",
+    "secrets-check": "ts-node bot/test/secrets-check.ts",
+    "addresses-check": "ts-node bot/test/addresses.test.ts",
+    "test:mainnet": "forge test --fork-url ${MAINNET_RPC_URL}",
+    "test:arbitrum": "forge test --fork-url ${ARBITRUM_RPC_URL}",
+    "test:base": "forge test --fork-url ${BASE_RPC_URL}",
+    "test:fork": "forge test --fork-url",
+    "e2e": "ts-node bot/src/e2e.ts",
+    "e2e:eth": "CHAIN_ID=1 ts-node bot/src/e2e.ts",
+    "e2e:base": "CHAIN_ID=8453 ts-node bot/src/e2e.ts",
+    "e2e:arb": "CHAIN_ID=42161 ts-node bot/src/e2e.ts",
+    "test:execution": "ts-node bot/test/execution.test.ts",
+    "test:execution:eth": "CHAIN_ID=1 ts-node bot/test/execution.test.ts",
+    "test:execution:base": "CHAIN_ID=8453 ts-node bot/test/execution.test.ts",
+    "test:execution:arb": "CHAIN_ID=42161 ts-node bot/test/execution.test.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.0.1",
     "dotenv": "^17.4.2",
     "ethers": "^6.17.0",
@@ -25,6 +42,7 @@
     "@bgd-labs/aave-address-book": "^4.44.22",
     "@openzeppelin/contracts": "^5.6.1",
     "@uniswap/v3-core": "^1.0.1",
-    "@uniswap/v3-periphery": "^1.4.4"
+    "@uniswap/v3-periphery": "^1.4.4",
+    "better-sqlite3": "^12.11.1"
   }
 }

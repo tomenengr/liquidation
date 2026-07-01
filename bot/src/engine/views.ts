@@ -6,6 +6,7 @@ export interface ReserveDataView {
     variableBorrowIndex: bigint;  // 全局浮动借款利息指数 (精度: RAY 1e27)
     liquidationThreshold: bigint; // 清算阈值 (精度: PERCENTAGE 1e4, e.g. 8500 = 85%)
     liquidationBonus: bigint;     // 清算奖励 (精度: PERCENTAGE 1e4, e.g. 10500 = 5% bonus)
+    eModeCategory: number;        // E-Mode category this reserve belongs to (0 = none). Used for override if matches user eMode.
 }
 
 export interface UserReservePosition {
@@ -19,7 +20,12 @@ export interface UserReservePosition {
 
 export interface UserPositionView {
     user: string;                 // 用户地址
+    eModeCategoryId?: number;     // User's E-Mode category (0 = no E-Mode). From pool.getUserEMode() or subgraph. Multi-chain aware. Defaults to 0.
     reservesData: Map<string, UserReservePosition>; // assetAddress -> 用户的单资产持仓明细
+    // Isolation Mode info (per design/DB/subgraph): if user has enabled an isolated collateral, only that one should be used as collateral.
+    // HF calc itself uses the enabled collaterals' (isUsingAsCollateral) LTs; isolation affects borrow power and debt ceiling but HF formula remains.
+    isolationModeAsset?: string;
+    isolationModeTotalDebt?: bigint;
 }
 
 export interface UserAccountData {

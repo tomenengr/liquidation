@@ -1,8 +1,9 @@
 import { ethers } from "ethers";
 import * as fs from "fs";
 import * as path from "path";
+import { config } from './config';
 
-const POOL_ADDRESS = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+const POOL_ADDRESS = config.getAddresses().POOL;
 const BORROW_EVENT = "event Borrow(address indexed reserve, address user, address indexed onBehalfOf, uint256 amount, uint8 interestRateMode, uint256 borrowRate, uint16 indexed referralCode)";
 
 export async function scanBorrowers(provider: ethers.Provider, blocksToScan: number = 100): Promise<string[]> {

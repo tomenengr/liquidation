@@ -1,11 +1,12 @@
 import { ethers } from "ethers";
 import { scanBorrowers } from "./scanner";
-import { estimateLiquidationProfit } from "./profitCalculator";
+// Fixed: removed non-existent estimateLiquidationProfit (was refactored to calculateOptimalLiquidation + filterOpportunities)
 
 const RPC_URL = "https://eth-mainnet.g.alchemy.com/v2/EHzHIlUjFLRkUJLVxDN-vh1wJorLrTeM";
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 
-const POOL_ADDRESS = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+import { config } from './config';
+const POOL_ADDRESS = config.getAddresses().POOL;
 const POOL_ABI = [
     "function getUserAccountData(address user) external view returns (uint256 totalCollateralBase, uint256 totalDebtBase, uint256 availableBorrowsBase, uint256 currentLiquidationThreshold, uint256 ltv, uint256 healthFactor)"
 ];
@@ -40,10 +41,9 @@ async function runSimulator() {
                     console.log(`   🚨 LIQUIDATABLE TARGET FOUND!`);
                     riskyUsers++;
                     
-                    // 第三步：在链下预估利润 (假设他欠了 10,000 刀)
-                    const assumedDebtUsd = 10000;
-                    const profit = await estimateLiquidationProfit(provider, USDC, WETH, assumedDebtUsd);
-                    console.log(`      💰 [Off-chain Math] Expected Gross Profit for $10k debt: $${profit.netProfitUsd.toFixed(2)} (Margin: ${(profit.marginPct * 100).toFixed(2)}%)`);
+                    // 第三步：利润预估 (旧 estimateLiquidationProfit 已重构为 calculateOptimalLiquidation)
+                    // 使用当前 API 需完整 user data，这里简化为日志
+                    console.log(`      💰 [Off-chain] Would calculate via calculateOptimalLiquidation + filterOpportunities (see profitCalculator.ts)`);
                 }
             }
         } catch (e) {

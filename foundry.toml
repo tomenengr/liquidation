@@ -6,4 +6,10 @@ via_ir = true
 optimizer = true
 optimizer_runs = 200
 
+# Multi-chain fork support
+[rpc_endpoints]
+mainnet = "${MAINNET_RPC_URL}"
+arbitrum = "${ARBITRUM_RPC_URL}"
+base = "${BASE_RPC_URL}"
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

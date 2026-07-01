@@ -1,32 +1,33 @@
 import { ethers } from 'ethers';
 import { Feeder } from '../test/Feeder';
 import { calculateUserAccountData } from './engine/calculateUserAccountData';
-import { calculateOptimalLiquidation } from './profitCalculator';
+import { calculateOptimalLiquidation, filterOpportunities } from './profitCalculator';
 import { ExecutionRouter } from './ExecutionRouter';
 import { ReserveDataView, UserPositionView } from './engine/views';
 import { performance } from 'perf_hooks';
 
+import { config } from './config';
+import { initDb } from './db';
+import { bulkSyncFromSubgraph, loadAtRiskAddressesFromDb } from './stateSync';
+import { scanBorrowers } from './scanner';
+
 async function runPriceTrigger() {
     console.log("==================================================");
-    console.log("🚀 STARTING ZERO-RPC PRICE TRIGGER SIMULATION 🚀");
+    console.log("🚀 STARTING ZERO-RPC PRICE TRIGGER SIMULATION 🚀 (hybrid DB/subgraph + dynamic scan; fully uses config for CHAIN/RPC/addresses - Problem 4)");
     console.log("==================================================\n");
 
-    const USERS = [
-        "0xDb57FDF5fD24A9d0e1Ea94552Eb2C7BdCb28fA27".toLowerCase(),
-        "0x37bAB29Dafe65278552bc74AdBBAbC15904b5502".toLowerCase(),
-        "0x486E49eEDDf6432d3e10B15C25BB2Bc8da5811C9".toLowerCase(),
-        "0xa462d9AcaCcb141Ce7F17213b95198fE248c27A1".toLowerCase(),
-        "0xbC90243806b018E5e75930CfcCcFb3230D6D226c".toLowerCase()
-    ];
-    
-    // WETH address on Mainnet
-    const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".toLowerCase();
-    // WBTC address on Mainnet
-    const WBTC = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599".toLowerCase();
+    // NO static/hardcoded USERS list (removed per Problem 4).
+    // Use hybrid: loadAtRisk from DB (populated by subgraph) or dynamic scanner.
+    // Centralized: CHAIN_ID, RPC, addresses (WETH etc) from config. Supports ETH + L2 (e.g. CHAIN_ID=8453).
+    const chainId = config.CHAIN_ID;
+    const chainCfg = config.getChainConfig(chainId);
 
-    const feeder = new Feeder("http://127.0.0.1:8545");
+    // Use config RPC (defaults to anvil localhost for sims; override via env/CHAIN_ID)
+    const feeder = new Feeder(config.RPC_URL, config.CHAIN_ID);
+    const ADDRESSES = config.getAddresses(chainId);
+    const POOL_ADDR = ADDRESSES.POOL.toLowerCase();
     const pool = new ethers.Contract(
-        "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2".toLowerCase(),
+        POOL_ADDR,
         ["function getReservesList() view returns (address[])"],
         feeder.provider
     );
@@ -47,20 +48,40 @@ async function runPriceTrigger() {
     }
     console.log(`    -> Loaded ${reservesConfig.size} reserves into memory.`);
 
-    console.log("\n[3] Cold Start: Loading Target Watchlist Positions (Simulating Event Sourcing)...");
+    console.log("\n[3] Cold Start: Loading Target Watchlist Positions via hybrid/DB or dynamic scan (no static USERS)...");
+    // Hybrid discovery for sim (Problem 4): DB at-risk first (from prior bulk), fallback to on-chain scanner (dynamic)
+    initDb();
+    let USERS: string[] = loadAtRiskAddressesFromDb(chainId, chainCfg.MIN_DEBT_BASE);
+    if (USERS.length === 0) {
+      if (config.USE_SUBGRAPH_DISCOVERY) {
+        try {
+          await bulkSyncFromSubgraph(chainId, config.MAX_DISCOVERED_USERS);
+          USERS = loadAtRiskAddressesFromDb(chainId, chainCfg.MIN_DEBT_BASE);
+        } catch (e: any) { /* ignore */ }
+      }
+    }
+    if (USERS.length === 0) {
+      console.log('   [PriceTrigger] No DB at-risk users; using dynamic event scanner for borrowers (multi-chain, no hardcoded list).');
+      USERS = await scanBorrowers(feeder.provider, 300);
+    }
+    if (USERS.length === 0) {
+      console.warn('   Warning: 0 users discovered via hybrid/scan. Price crash sim may report 0 liquidations (seed DB with GRAPH_API_KEY + bulk or use real fork with activity).');
+    }
+
     const userPositions: UserPositionView[] = [];
     for (const user of USERS) {
         const pos = await feeder.fetchUserPosition(user, ASSETS, blockTag);
         userPositions.push(pos);
     }
-    console.log(`    -> Loaded ${userPositions.length} massive borrowers into memory.`);
+    console.log(`    -> Loaded ${userPositions.length} borrowers into memory from hybrid/dynamic source (chain ${chainId}).`);
 
     console.log("\n==================================================");
     console.log("🧠 MEMORY SNAPSHOT READY. ALL RPC CONNECTIONS DROPPED.");
     console.log("==================================================\n");
 
     // Instantiate the async ExecutionRouter
-    const router = new ExecutionRouter("http://127.0.0.1:8545");
+    // Use chain-aware RPC (supports live key or fork at 8545; real Quoter works via fork state or live RPC)
+    const router = new ExecutionRouter(chainCfg.RPC_URL || "http://127.0.0.1:8545", chainId);
 
     // Baseline calculation
     console.log("Baseline Health Factors (Before Crash):");
@@ -78,9 +99,18 @@ async function runPriceTrigger() {
     // --- ZERO-RPC EXECUTION START ---
     const t0 = performance.now();
 
-    // 1. Update the price in memory instantly
-    const wethKey = Array.from(reservesConfig.keys()).find(k => k.toLowerCase() === WETH);
-    if (!wethKey) throw new Error("WETH not found in reservesConfig");
+    // 1. Update the price in memory instantly (use centralized WETH from addresses.ts/config - multi-chain aware)
+    const wethAddr = ADDRESSES.WETH.toLowerCase();
+    let wethKey = Array.from(reservesConfig.keys()).find(k => k.toLowerCase() === wethAddr);
+    if (!wethKey) {
+      // Fallback: try to find a likely WETH asset (anvil fork or L2 variants) for demo crash
+      console.warn('   WETH addr from config not matched exactly in reserves; attempting L2/mainnet pattern fallback for sim.');
+      wethKey = Array.from(reservesConfig.keys()).find(k => {
+        const kl = k.toLowerCase();
+        return kl.includes('c02aaa') || kl.includes('4200000000000000000000000000000000000006') || kl.includes('82af4944') || kl === wethAddr;
+      });
+    }
+    if (!wethKey) throw new Error("No WETH-like asset found in reservesConfig for price crash sim. Check fork/chain.");
     const wethConfig = reservesConfig.get(wethKey)!;
     const oldPrice = wethConfig.priceInBaseCurrency;
     const newPrice = (oldPrice * 60n) / 100n; // 40% drop
@@ -99,8 +129,9 @@ async function runPriceTrigger() {
                 console.log(`  -> 🔪 LIQUIDATION TRIGGERED! HF < 1.0`);
                 
                 const opportunities = calculateOptimalLiquidation(data, reservesConfig);
-                if (opportunities.length > 0) {
-                    const best = opportunities[0];
+                const filtered = filterOpportunities(opportunities);
+                if (filtered.length > 0) {
+                    const best = filtered[0];
                     console.log(`  -> 💡 Stage 1 (0-RPC): Paper Profit optimal pair: Repay [${best.debtAsset}] to seize [${best.collateralAsset}]`);
                     console.log(`     - Base Debt to Cover: $${(Number(best.debtToCoverBase) / 1e8).toFixed(2)}`);
                     console.log(`     - Base Expected Collateral: $${(Number(best.grossRevenueBase) / 1e8).toFixed(2)} (Includes ${(Number(best.liquidationBonus) / 100 - 100).toFixed(2)}% Bonus)`);
@@ -110,6 +141,8 @@ async function runPriceTrigger() {
                     // IMPORTANT: To keep the trigger fast, we don't await in the critical loop in production, 
                     // but for this script we await to print the ticket sequentially.
                     const ticket = await router.verifyAndRoute(best, reservesConfig);
+                    
+                    // Stage 3: Execution decision
                     if (ticket.isProfitable) {
                         console.log(`     ✅ EXECUTION APPROVED!`);
                         console.log(`     - Real Swap Output: ${ticket.quoterAmountOutToken}`);

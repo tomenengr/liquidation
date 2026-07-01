@@ -3,68 +3,252 @@ import * as dotenv from "dotenv";
 
 dotenv.config();
 
-// 1. 真实的主网 WebSocket RPC (生产环境中 HTTP 轮询太慢，必须用 WSS 实时监听)
-// 这里替换为你的 Alchemy WSS 链接 (将 https 换成 wss)
-const RPC_URL = "wss://eth-mainnet.g.alchemy.com/v2/EHzHIlUjFLRkUJLVxDN-vh1wJorLrTeM";
-const provider = new ethers.WebSocketProvider(RPC_URL);
+import { config } from './config';
+import { Feeder } from '../test/Feeder';
+import { calculateUserAccountData } from './engine/calculateUserAccountData';
+import { calculateOptimalLiquidation, filterOpportunities } from './profitCalculator';
+import { ExecutionRouter } from './ExecutionRouter';
+import { ReserveDataView, UserPositionView } from './engine/views';
+import { MevBundleSubmitter } from './mevBundle';
+import { LiquidationExecutor } from './executor';
+import * as fs from 'fs';
+import * as path from 'path';
+import { initDb } from './db';
+import { bulkSyncFromSubgraph, loadAtRiskAddressesFromDb } from './stateSync';
 
-// 2. Aave V3 核心合约
-const POOL_ADDRESS = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+// Production Liquidation Bot - Advanced Engine Integration (Task 1.5 + Problem 4)
+// Uses: advanced state (hybrid DB/subgraph users like monitor) + 0-RPC calc + ExecutionRouter
+// All user discovery via loadAtRiskAddressesFromDb / stateSync; centralized config only.
+
+const RPC_URL = config.RPC_URL;
+const CHAIN_ID = config.CHAIN_ID;
+// Robust WS + RPC (1.15): reconnect + fallback + rate limit
+let provider = new ethers.WebSocketProvider(RPC_URL);
+let feeder = new Feeder(RPC_URL, CHAIN_ID);
+
+function setupRobustProvider() {
+  provider.on('error', (err) => {
+    console.error('[WS] Error, attempting reconnect...');
+    setTimeout(() => {
+      try {
+        provider = new ethers.WebSocketProvider(RPC_URL);
+        feeder = new Feeder(RPC_URL, CHAIN_ID);
+        console.log('[WS] Reconnected');
+      } catch (e) { console.error('Reconnect fail', e); }
+    }, 2000);
+  });
+  // Simple rate limit backoff for calls
+  const originalGetBlock = provider.getBlock.bind(provider);
+  (provider as any).getBlock = async (block: any, prefetchTxs?: any) => {
+    try {
+      return await originalGetBlock(block, prefetchTxs);
+    } catch (e: any) {
+      if (e.code === 'RATE_LIMIT' || (e.message && e.message.includes('rate'))) {
+        await new Promise(r => setTimeout(r, 1000));
+        return originalGetBlock(block, prefetchTxs);
+      }
+      throw e;
+    }
+  };
+}
+setupRobustProvider();
+const ADDRESSES = config.getAddresses();
+const POOL_ADDRESS = ADDRESSES.POOL;
+
 const POOL_ABI = [
-  "function getUserAccountData(address user) external view returns (uint256 totalCollateralBase, uint256 totalDebtBase, uint256 availableBorrowsBase, uint256 currentLiquidationThreshold, uint256 ltv, uint256 healthFactor)"
+  "function getReservesList() view returns (address[])",
+  "function getUserAccountData(address user) view returns (uint256 totalCollateralBase, uint256 totalDebtBase, uint256 availableBorrowsBase, uint256 currentLiquidationThreshold, uint256 ltv, uint256 healthFactor)"
 ];
+
+const ORACLE_ADDRESS = ADDRESSES.ORACLE;
+const ORACLE_ABI = ["function getAssetPrice(address asset) view returns (uint256)"];
+
 const pool = new ethers.Contract(POOL_ADDRESS, POOL_ABI, provider);
+const oracle = new ethers.Contract(ORACLE_ADDRESS, ORACLE_ABI, provider);
 
-// 3. 我们要实时监控的大户名单 (生产环境会从数据库读，这里硬编码几个著名的巨鲸地址作为 Demo)
-const whales = [
-    "0x892a6f9df0147e5f079b0993f486f9aca3c87881", // 某知名 DeFi 巨鲸
-    "0x1111111254fb6c44bac0bed2854e76f90643097d"  // 1inch 路由地址 (仅作监听测试)
-];
+// Users now loaded exclusively via hybrid DB/subgraph (no static/hardcoded lists).
+// Uses loadAtRiskAddressesFromDb + optional bulkSyncFromSubgraph per Task 3.8 / Problem 4.
+// Multi-chain via config.getChainConfig() / CHAIN_ID.
 
-async function main() {
-    console.log("🟢 Production Liquidation Bot Started.");
-    console.log(`📡 Connected to WebSocket node. Listening for real-time blocks...`);
-    
-    // 4. 生产级高并发：监听每一个新出的以太坊区块 (约 12 秒一个)
-    provider.on("block", async (blockNumber) => {
-        console.log(`\n📦 [Block ${blockNumber}] Mined! Scanning ${whales.length} whales...`);
-        
-        // 5. 并发查询所有监控对象的健康因子
-        const checks = whales.map(async (user) => {
-            try {
-                const data = await pool.getUserAccountData(user);
-                const hf = Number(ethers.formatUnits(data.healthFactor, 18));
-                
-                // 为了演示，如果没获取到，我们过滤掉非常大(type(uint256).max)的初始默认值
-                if (hf > 1000) return; 
+let reservesConfig = new Map<string, ReserveDataView>();
+let userPositions: UserPositionView[] = [];
+let currentTimestamp = 0n;
+let recalculationQueued = false;
 
-                // 生产级：只打印危险的，减少控制台 IO，提高性能
-                if (hf < 1.1 && hf >= 1.0) {
-                   console.log(`⚠️ WARNING: User ${user.slice(0,8)}... HF is dropping: ${hf.toFixed(4)}`);
-                }
-                
-                // 6. 跌破 1.0！立刻触发清算
-                if (hf < 1.0) {
-                   console.log(`🚨 TARGET LOCKED! User ${user} HF is ${hf.toFixed(4)}!`);
-                   console.log(`⚡ Initiating Flashloan transaction...`);
-                   // const tx = await liquidatorContract.executeLiquidation(...);
-                   // await tx.wait();
-                } else {
-                   console.log(`User ${user.slice(0,8)}... HF: ${hf.toFixed(4)} (Safe)`);
-                }
-            } catch (err) {
-                // 网络波动导致偶尔查询失败是正常的，catch 掉避免进程崩溃
-                console.error(`[Error] Failed to fetch data for ${user.slice(0,8)}`);
-            }
-        });
-        
-        await Promise.all(checks);
-    });
+const router = new ExecutionRouter(RPC_URL, config.CHAIN_ID);
+// bundleSubmitter creation deduped to per-ticket inside conditional real path (prod-001.10/12)
+
+// Simple structured logger + opportunity persistence (1.13)
+const logOpp = (msg: string, data?: any) => {
+  const line = `[${new Date().toISOString()}] ${msg} ${data ? JSON.stringify(data) : ''}\n`;
+  if (config.STRUCTURED_LOG) console.log(line.trim());
+  else console.log(msg);
+  try {
+    fs.appendFileSync(config.OPPORTUNITY_LOG_FILE, line);
+  } catch (e) {}
+};
+
+async function coldStart() {
+  console.log("❄️ [Prod] Cold start - loading reserves & hybrid users (DB/subgraph, no hardcoded)...");
+  const ASSETS: string[] = await pool.getReservesList();
+  const blockTag = await provider.getBlockNumber();
+  const block = await provider.getBlock(blockTag);
+  currentTimestamp = BigInt(block!.timestamp);
+
+  for (const asset of ASSETS) {
+    const rd = await feeder.fetchReserveData(asset, blockTag);
+    reservesConfig.set(asset, rd);
+  }
+
+  // Hybrid discovery (Problem 4 / 3.8): use centralized config + stateSync
+  const chainId = config.CHAIN_ID;
+  initDb();
+  const chainCfg = config.getChainConfig(chainId);
+  if (config.USE_SUBGRAPH_DISCOVERY) {
+    try {
+      const syncRes = await bulkSyncFromSubgraph(chainId, config.MAX_DISCOVERED_USERS);
+      console.log(`    -> Subgraph bulk: ${syncRes.usersLoaded} users upserted to DB.`);
+    } catch (e: any) {
+      console.warn('[HYBRID] bulkSyncFromSubgraph skipped (no GRAPH_API_KEY?):', e.message);
+    }
+  }
+  let loadedUsers: string[] = loadAtRiskAddressesFromDb(chainId, chainCfg.MIN_DEBT_BASE);
+  const USERS = loadedUsers.slice(0, config.MAX_DISCOVERED_USERS);
+  if (USERS.length === 0) {
+    console.warn('[index] 0 users from hybrid DB/subgraph. Production should provide GRAPH_API_KEY or seed via events/scans. Proceeding with empty watchlist.');
+  }
+
+  for (const user of USERS) {
+    const pos = await feeder.fetchUserPosition(user, ASSETS, blockTag);
+    userPositions.push(pos);
+  }
+  console.log(`✅ Loaded ${reservesConfig.size} reserves, ${userPositions.length} hybrid users (chainId=${chainId})`);
 }
 
-// 捕获异常，防止 WebSocket 断开导致程序退出
-process.on('uncaughtException', (err) => {
-    console.error("Uncaught Exception:", err);
-});
+function queueRecalculation() {
+  if (recalculationQueued) return;
+  recalculationQueued = true;
+  setTimeout(() => {
+    recalculationQueued = false;
+    triggerEngine();
+  }, 50);
+}
 
-main().catch(console.error);
+async function triggerEngine() {
+  const t0 = performance.now();
+  let processed = 0;
+  const maxPerBlock = config.BACKPRESSURE_MAX_PER_BLOCK;
+
+  for (const pos of userPositions) {
+    if (processed >= maxPerBlock) {
+      logOpp('Back-pressure: skipped remaining for this tick');
+      break;
+    }
+    const data = calculateUserAccountData(pos, reservesConfig, currentTimestamp);
+    if (data.totalDebtBase < 1000000000n) continue;
+
+    const hf = Number(data.healthFactor) / 1e18;
+    if (hf < 1.0) {
+      logOpp(`LIQUIDATION TRIGGERED: ${pos.user} HF=${hf.toFixed(4)}`);
+
+      const opportunities = calculateOptimalLiquidation(data, reservesConfig);
+      const filtered = filterOpportunities(opportunities);
+      if (filtered.length === 0) {
+        logOpp('No profitable opportunities after filters.');
+        continue;
+      }
+
+      const best = filtered[0];
+      logOpp(`Optimal: repay ${best.debtAsset} seize ${best.collateralAsset}`);
+
+      const ticket = await router.verifyAndRoute(best, reservesConfig);
+      
+      // Stage 3: Execution decision (clear orchestration)
+      if (ticket.isProfitable) {
+        logOpp(`APPROVED - Net Profit (USD): $${(Number(ticket.netProfitBase) / 1e8).toFixed(2)}`, {ticket: {repay: ticket.amountToRepayToken.toString(), bribe: ticket.bribeToken.toString()}});
+
+        // prod-001.12: Wire executor into index.ts (minimal, similar to monitor, post-ticket)
+        // Uses config-driven ctor (CHAIN_ID), passes reserves for accounting. Stages preserved.
+        const executor = new LiquidationExecutor(RPC_URL, CHAIN_ID);
+        const execRes = await executor.execute(best, ticket, reservesConfig);
+        logOpp(`     Stage 3 (executor): ${execRes.dryRun ? 'DRY-RUN only (no tx)' : (execRes.success ? 'SUCCESS' : 'FAILED')} ${execRes.txHash ? 'tx=' + execRes.txHash : ''}${execRes.reason || execRes.error ? ' ' + (execRes.reason || execRes.error) : ''}`);
+
+        // prod-001.10: conditional real path for bundle after executor. Keep sim for dry/MOCK. Deduped (create inside; top-level bundleSubmitter removed).
+        if (!execRes.dryRun) {
+          logOpp('Submitting MEV bundle (sim + retry, real path post-executor)...');
+          const bundleSubmitter = new MevBundleSubmitter(RPC_URL, CHAIN_ID);
+          const bundleResult = await bundleSubmitter.submitBundle(best, ticket);
+          logOpp(`Bundle: ${bundleResult.success ? 'SUCCESS' : 'FAILED'} after ${bundleResult.attempts} attempts`, bundleResult);
+
+          // Persistence for opportunities (1.13)
+          try {
+            const oppLog = {time: new Date().toISOString(), user: pos.user, ticket, bundle: bundleResult};
+            fs.appendFileSync(config.OPPORTUNITY_LOG_FILE, JSON.stringify(oppLog) + '\n');
+          } catch(e) {}
+        } else {
+          logOpp('Bundle skipped (dry-run; sim kept in MevBundleSubmitter for MOCK/dry)');
+        }
+      } else {
+        logOpp(`REJECTED: ${ticket.failReason}`);
+      }
+      processed++;
+    } else if (hf < 1.05) {
+      logOpp(`Approaching liquidation: ${pos.user} HF=${hf.toFixed(4)}`);
+    }
+  }
+
+  const t1 = performance.now();
+  logOpp(`Engine tick: ${(t1 - t0).toFixed(1)}ms`);
+}
+
+async function startProduction() {
+  await coldStart();
+
+  console.log("🟢 [Prod] Advanced Liquidation Bot started (using monitor + calc + router)");
+
+  // Listen for on-chain updates (same pattern as advanced monitor)
+  pool.on("ReserveDataUpdated", () => queueRecalculation());
+
+  provider.on("block", async (blockNumber) => {
+    const block = await provider.getBlock(blockNumber);
+    currentTimestamp = BigInt(block!.timestamp);
+
+    // Simple price poll on every block (prod would use Chainlink oracles)
+    const assets = Array.from(reservesConfig.keys());
+    try {
+      const prices = await Promise.all(assets.map(a => oracle.getAssetPrice(a)));
+      let changed = false;
+      prices.forEach((p, i) => {
+        const asset = assets[i];
+        const cfg = reservesConfig.get(asset)!;
+        const newP = BigInt(p);
+        if (cfg.priceInBaseCurrency !== newP) {
+          cfg.priceInBaseCurrency = newP;
+          changed = true;
+        }
+      });
+      if (changed) queueRecalculation();
+    } catch (e) {
+      // ignore transient errors
+    }
+  });
+
+  // Simple periodic reconciliation (prod would be more robust)
+  setInterval(async () => {
+    if (userPositions.length === 0) return;
+    const sample = userPositions[0];
+    try {
+      const onchain = await pool.getUserAccountData(sample.user);
+      const ts = calculateUserAccountData(sample, reservesConfig, currentTimestamp);
+      const drift = Math.abs(Number(onchain.healthFactor) - Number(ts.healthFactor));
+      if (drift > 1e14) {
+        console.log(`[RECON] Noticeable HF drift for ${sample.user}`);
+      }
+    } catch {}
+  }, 30000);
+}
+
+// Error handling
+process.on('uncaughtException', (err) => console.error("Uncaught:", err));
+
+startProduction().catch(console.error);

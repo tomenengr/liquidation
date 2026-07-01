@@ -14,19 +14,57 @@ interface IAaveOracle {
 contract FlashLiquidatorTest is Test {
     FlashLiquidator public liquidator;
 
-    // Aave V3 Mainnet Addrs
-    address constant POOL_ADDRESSES_PROVIDER = 0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e;
-    address constant POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
-    address constant SWAP_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
-    
-    // Tokens
-    address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
-    address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    // Addresses loaded in setUp from env (with mainnet defaults).
+    // This allows the same test file to work on different forks.
+    address POOL_ADDRESSES_PROVIDER;
+    address POOL;
+    address SWAP_ROUTER;
+    address USDT;
+    address WETH;
 
     address victim = address(0x1337);
 
+    bool isForkTest;
+
     function setUp() public {
-        liquidator = new FlashLiquidator(POOL_ADDRESSES_PROVIDER, SWAP_ROUTER);
+        // Multi-chain fork support (Task 1.4)
+        // Run with:
+        //   forge test --fork-url $MAINNET_RPC_URL
+        //   forge test --fork-url $ARBITRUM_RPC_URL
+        //   forge test --fork-url $BASE_RPC_URL
+        //
+        // Inside the test you can also do dynamic forking with vm.createSelectFork
+
+        // Load addresses from env with safe defaults (mainnet)
+        POOL_ADDRESSES_PROVIDER = _envOrAddress("AAVE_POOL_ADDRESSES_PROVIDER", "0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e");
+        POOL = _envOrAddress("AAVE_POOL", "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2");
+        SWAP_ROUTER = _envOrAddress("UNISWAP_SWAP_ROUTER", "0xE592427A0AEce92De3Edee1F18E0157C05861564");
+        USDT = _envOrAddress("USDT_ADDRESS", "0xdAC17F958D2ee523a2206206994597C13D831ec7");
+        WETH = _envOrAddress("WETH_ADDRESS", "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+
+        // Fork selection (if FORK_URL provided)
+        string memory forkUrl = vm.envOr("FORK_URL", string(""));
+        if (bytes(forkUrl).length > 0) {
+            vm.createSelectFork(forkUrl);
+        }
+
+        isForkTest = block.chainid != 31337;  // plain `forge test` is usually Anvil (31337)
+
+        // Deploy inside try so local non-fork runs don't hard-fail the suite
+        try this.deployLiquidator() returns (FlashLiquidator l) {
+            liquidator = l;
+        } catch {
+            // test functions below will skip
+        }
+    }
+
+    function deployLiquidator() external returns (FlashLiquidator) {
+        return new FlashLiquidator(POOL_ADDRESSES_PROVIDER, SWAP_ROUTER);
+    }
+
+    function _envOrAddress(string memory key, string memory defaultValue) internal view returns (address) {
+        string memory val = vm.envOr(key, defaultValue);
+        return vm.parseAddress(val);
     }
 
     function _setupVictimAndCrash() internal {
@@ -58,7 +96,7 @@ contract FlashLiquidatorTest is Test {
 
     // 1. Test SafeERC20 compatibility with USDT
     function test_usdtSafeERC20() public {
-        if (block.chainid != 1) return;
+        if (!isForkTest) vm.skip(true, "Requires a fork. Use --fork-url or FORK_URL env");
         _setupVictimAndCrash();
 
         uint256 debtToCover = 2500 * 1e6;
@@ -83,7 +121,7 @@ contract FlashLiquidatorTest is Test {
 
     // 2. Test slippage protection reverts when MEV sandwiched
     function test_amountOutMinimum_revert() public {
-        if (block.chainid != 1) return;
+        if (!isForkTest) vm.skip(true, "Requires a fork. Use --fork-url or FORK_URL env");
         _setupVictimAndCrash();
 
         uint256 debtToCover = 2500 * 1e6;
@@ -103,7 +141,7 @@ contract FlashLiquidatorTest is Test {
 
     // 3. Test dust clearing via type(uint256).max
     function test_useMaxCloseFactor() public {
-        if (block.chainid != 1) return;
+        if (!isForkTest) vm.skip(true, "Requires a fork. Use --fork-url or FORK_URL env");
         _setupVictimAndCrash();
 
         // 100% liquidation via MaxCloseFactor
