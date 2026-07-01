@@ -27,7 +27,7 @@ export class HealthServer {
 
   public async start(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.server = http.createServer((req, res) => {
+      this.server = http.createServer((req: http.IncomingMessage, res: http.ServerResponse) => {
         if (req.method === 'GET' && req.url === '/health') {
           if (this.isShuttingDown) {
             res.writeHead(503, { 'Content-Type': 'application/json' });
@@ -45,7 +45,7 @@ export class HealthServer {
         }
       });
 
-      this.server.on('error', (err) => {
+      this.server.on('error', (err: Error) => {
         reject(err);
       });
 
@@ -58,7 +58,7 @@ export class HealthServer {
   public async stop(): Promise<void> {
     return new Promise((resolve, reject) => {
       if (this.server) {
-        this.server.close((err) => {
+        this.server.close((err?: Error) => {
           if (err) reject(err);
           else resolve();
         });

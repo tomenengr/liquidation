@@ -300,9 +300,9 @@ All use config.getChainConfig; preserve post-ticket. TDD in mevBundle + tests. N
 - prod-003.11: Process Supervisor Recommendations + package scripts (pm2/systemd/docker)  
 - prod-003.12: Alerting (ERROR + optional simple webhook)  
 - prod-003.13: Extend Recon Alerts + Auto Dirty-Mark on Lag  ✅  
-- prod-003.14: Resource / Memory Guards + Backpressure Enhancements  
-- prod-003.15: Resilience Scenario Tests + Integration + Full Verification  
-- prod-003.16: Runbook Skeleton + Docs Updates  
+- prod-003.14: Resource / Memory Guards + Backpressure Enhancements  ✅  
+- prod-003.15: Resilience Scenario Tests + Integration  ✅ + Full Verification  
+- prod-003.16: Runbook Skeleton + Docs Updates  ✅  
 
 **prod-004: Full Verification + Polish — 16 subtasks**  
 - prod-004.01: Verification harness + new prod-e2e-fork.test.ts skeleton (RED)  

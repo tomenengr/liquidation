@@ -79,9 +79,9 @@ See full plan: `docs/superpowers/plans/2026-06-30-liquidation-improvement-plan.m
 - [x] prod-003.11: Process Supervisor Recommendations
 - [x] prod-003.12: Alerting (ERROR + simple webhook)
 - [x] prod-003.13: Extend Recon Alerts + Auto Dirty-Mark on Lag
-- [ ] prod-003.14: Resource / Memory Guards + Backpressure Enhancements
-- [ ] prod-003.15: Resilience Scenario Tests + Integration
-- [ ] prod-003.16: Runbook Skeleton + Docs Updates
+- [x] prod-003.14: Resource / Memory Guards + Backpressure Enhancements
+- [x] prod-003.15: Resilience Scenario Tests + Integration
+- [x] prod-003.16: Runbook Skeleton + Docs Updates
 
 - prod-002 (15): Real MEV (Flashbots + L2) — IN PROGRESS (002.01 - 002.06 completed: MOCK_MEV flag, secrets validation, Flashbots submission path via fetch, signed tx construction)
 - prod-004 (16): Full Verification (profitable paths, new prod-e2e-fork.test, recon/perf)
