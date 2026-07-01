@@ -1,3 +1,4 @@
+import { NonceManager } from './nonceManager';
 import { createProviderPool } from "./providerPool";
 import { ethers } from "ethers";
 import { ExecutionTicket } from "./ExecutionRouter";
@@ -24,6 +25,7 @@ export interface MevSubmitResult {
  * Always post-ticket/executor. Preserves flow + 0-RPC.
  */
 export class MevBundleSubmitter {
+  private nonceManager?: NonceManager;
   private provider: ethers.Provider;
   private maxRetries: number = 3;
   private retryDelayMs: number = 500;
@@ -55,6 +57,11 @@ export class MevBundleSubmitter {
     const mockMeV = (process.env.MOCK_MEV !== 'false') && (chainCfg.MOCK_MEV !== false);
     const useReal = !isDry && !mockMeV;
 
+    const wallet = config.getExecutorWallet(chainCfg.RPC_URL || config.RPC_URL);
+    if (useReal && wallet && !this.nonceManager) {
+      this.nonceManager = new NonceManager(this.provider, wallet.address);
+    }
+
     if (isDry || mockMeV) {
       console.log(`[MEV] 🔒 DRY/MOCK path (DRY=${isDry} MOCK_MEV=${mockMeV}) chain=${this.chainId} — keep simulation only (no real MEV submit)`);
     } else {
@@ -74,6 +81,7 @@ export class MevBundleSubmitter {
       let currentBribe = ticket.bribeToken;
 
       for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+        let currentNonce = this.nonceManager ? await this.nonceManager.getNonce() : undefined;
         let submitted = false;
         
         if (chainCfg.MEV_RELAY_URL) {
@@ -148,7 +156,7 @@ export class MevBundleSubmitter {
           // Direct L2 High-Priority Fallback
           console.log(`[MEV] No relay configured. Proceeding with direct mempool high-priority submission for L2 (Fallback).`);
           try {
-            const txResponse = await this.provider.broadcastTransaction(signedTx);
+            if (!signedTx) throw new Error('no signedTx'); const txResponse = await this.provider.broadcastTransaction(signedTx);
             console.log(`[MEV] ✅ Direct tx submitted: ${txResponse.hash}. Waiting for inclusion...`);
             submitted = true;
           } catch (err: any) {
@@ -165,6 +173,7 @@ export class MevBundleSubmitter {
             if (receipt) {
               console.log(`[MEV] ✅ Tx ${actualTxHash} INCLUDED in block ${receipt.blockNumber}. Landed Gas: ${receipt.gasUsed}`);
               console.log(`[MEV] Metrics: Modeled Profit=${ticket.netProfitToken}, Landed Gas Used=${receipt.gasUsed}`);
+              if (receipt.status === 1 && this.nonceManager) this.nonceManager.incrementNonce();
               return {
                 success: receipt.status === 1,
                 attempts: attempt,
@@ -183,6 +192,10 @@ export class MevBundleSubmitter {
         // 4. Retry and priority bump
         if (attempt < this.maxRetries) {
           currentBribe = (currentBribe * 110n) / 100n; // 10% bump
+          if (useReal) {
+            const exec = new LiquidationExecutor(chainCfg.RPC_URL, this.chainId);
+            signedTx = await exec.buildSignedTx(opportunity, ticket) || undefined;
+          }
           ticket.bribeToken = currentBribe; // Update ticket reference
           console.log(`[MEV] ⬆️ Bumping priority for retry. New bribe: ${currentBribe}`);
           // Note: Full dynamic rebuild of signedTx would happen here if FlashLiquidator supports dynamic bribes.
@@ -190,6 +203,7 @@ export class MevBundleSubmitter {
         }
       }
 
+      
       return { success: false, attempts: this.maxRetries, error: lastError || 'Timeout waiting for receipt', txHash: actualTxHash, _usedRealPath: true };
     }
 

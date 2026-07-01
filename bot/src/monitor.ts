@@ -1,3 +1,4 @@
+import { globalOpportunityCache } from './dedup';
 import { ethers } from "ethers";
 import { Feeder } from "../test/Feeder";
 import { calculateUserAccountData } from "./engine/calculateUserAccountData";
@@ -287,6 +288,10 @@ async function triggerEngine() {
             
             if (filtered.length > 0) {
                 const best = filtered[0];
+                if (globalOpportunityCache.isRecentlyProcessed(pos.user, best.debtAsset)) {
+                    console.log(`  -> ⏭️ SKIPPED (recently processed): User ${pos.user} debtAsset ${best.debtAsset}`);
+                    continue;
+                }
                 opportunitiesFound++;
                 console.log(`  -> 💡 Stage 1 (0-RPC): Optimal pair Repay [${best.debtAsset}] seize [${best.collateralAsset}]`);
                 console.log(`     Base Debt: $${(Number(best.debtToCoverBase)/1e8).toFixed(2)} | Gross: $${(Number(best.grossRevenueBase)/1e8).toFixed(2)}`);

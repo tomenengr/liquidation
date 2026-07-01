@@ -1,3 +1,4 @@
+import { globalOpportunityCache } from './dedup';
 import { ethers } from "ethers";
 import * as dotenv from "dotenv";
 
@@ -159,6 +160,10 @@ async function triggerEngine() {
       }
 
       const best = filtered[0];
+      if (globalOpportunityCache.isRecentlyProcessed(pos.user, best.debtAsset)) {
+        logOpp(`SKIPPED (recently processed): ${pos.user} - ${best.debtAsset}`);
+        continue;
+      }
       logOpp(`Optimal: repay ${best.debtAsset} seize ${best.collateralAsset}`);
 
       const ticket = await router.verifyAndRoute(best, reservesConfig);
