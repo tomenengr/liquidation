@@ -115,6 +115,7 @@ export const config = {
   LOG_FILE: process.env.LOG_FILE || 'bot.log',
 
   CIRCUIT_BREAKER_MAX_ERRORS: Number(process.env.CIRCUIT_BREAKER_MAX_ERRORS || 5),
+  ALERT_WEBHOOK_URL: process.env.ALERT_WEBHOOK_URL || "",
 
   // Execution config (prod-001.02 - CRITICAL centralization):
   // DRY_RUN_EXECUTION (default true for safety) - set false to allow real execution.
@@ -203,6 +204,7 @@ export const config = {
       LOG_LEVEL: this.LOG_LEVEL,
       LOG_FILE: this.LOG_FILE,
       CIRCUIT_BREAKER_MAX_ERRORS: this.CIRCUIT_BREAKER_MAX_ERRORS,
+      ALERT_WEBHOOK_URL: this.ALERT_WEBHOOK_URL,
 
       // prod-001.02 execution fields (centralized, exposed via getChainConfig for all prod paths)
       DRY_RUN_EXECUTION: dryRunExecution,
