@@ -24,10 +24,11 @@ import { validateStartup } from './startup';
 // Uses: advanced state (hybrid DB/subgraph users like monitor) + 0-RPC calc + ExecutionRouter
 // All user discovery via loadAtRiskAddressesFromDb / stateSync; centralized config only.
 
-const RPC_URL = config.RPC_URL;
 const CHAIN_ID = config.CHAIN_ID;
+const RPC_URL = config.getChainConfig(CHAIN_ID).RPC_URL;
+const WS_URL = RPC_URL.replace(/^http/, 'ws');
 // Robust WS + RPC (1.15): reconnect + fallback + rate limit
-let provider = new ethers.WebSocketProvider(RPC_URL);
+let provider = new ethers.WebSocketProvider(WS_URL);
 let feeder = new Feeder(RPC_URL, CHAIN_ID);
 
 function setupRobustProvider() {
@@ -35,7 +36,7 @@ function setupRobustProvider() {
     console.error('[WS] Error, attempting reconnect...');
     setTimeout(() => {
       try {
-        provider = new ethers.WebSocketProvider(RPC_URL);
+        provider = new ethers.WebSocketProvider(WS_URL);
         feeder = new Feeder(RPC_URL, CHAIN_ID);
         console.log('[WS] Reconnected');
       } catch (e) { console.error('Reconnect fail', e); }
@@ -102,6 +103,7 @@ async function coldStart() {
   for (const asset of ASSETS) {
     const rd = await feeder.fetchReserveData(asset, blockTag);
     reservesConfig.set(asset, rd);
+    await new Promise(r => setTimeout(r, 200)); // Rate limit protection
   }
 
   // Hybrid discovery (Problem 4 / 3.8): use centralized config + stateSync

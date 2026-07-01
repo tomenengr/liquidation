@@ -12,7 +12,7 @@ export interface ChainAddresses {
   POOL: string;
   POOL_ADDRESSES_PROVIDER: string;
   ORACLE: string;
-  UI_POOL_DATA_PROVIDER: string;
+  AAVE_PROTOCOL_DATA_PROVIDER: string;
   UNISWAP_SWAP_ROUTER: string;
   UNISWAP_QUOTER_V2: string;
   WETH: string; // Common token for reference
@@ -120,7 +120,7 @@ export function getAddresses(chainId: number = 1): ChainAddresses {
     POOL: aave.POOL,
     POOL_ADDRESSES_PROVIDER: aave.POOL_ADDRESSES_PROVIDER,
     ORACLE: aave.ORACLE || aave.AAVE_ORACLE || '0x54586bE62E3c3580375aE3723C145253060Ca0C2',
-    UI_POOL_DATA_PROVIDER: aave.UI_POOL_DATA_PROVIDER || '0x56b7A1012765C285afAC8b8F25C69Bf10ccfE978',
+    AAVE_PROTOCOL_DATA_PROVIDER: aave.AAVE_PROTOCOL_DATA_PROVIDER || '0x0a16f2FCC0D44FaE41cc54e079281D84A363bECD',
     UNISWAP_SWAP_ROUTER: uniswap.SWAP_ROUTER,
     UNISWAP_QUOTER_V2: uniswap.QUOTER_V2,
     WETH: WETH_BY_CHAIN[chainId],
