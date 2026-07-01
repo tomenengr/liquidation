@@ -14,6 +14,9 @@ import { LiquidationExecutor } from "./executor";
 import { bulkSyncFromSubgraph, syncUserPositionToDb, loadAtRiskAddressesFromDb, getAtRiskUsersForMemory, loadEngineViewsFromSubgraph } from './stateSync';
 import { initDb, upsertUserPosition, upsertUser, insertPriceHistory, upsertReserve, getRecentPrices, insertDrift, getRecentDrifts, getAtRiskUsers } from './db';
 import { SubgraphClient, extractAssetAddress } from './subgraph';
+import { isMemoryCritical } from './health';
+
+const BACKPRESSURE_MAX_PER_BLOCK = 10;
 
 // Production-ready: use config for RPC
 const chainId = config.CHAIN_ID;
@@ -253,6 +256,11 @@ function queueRecalculation() {
 }
 
 async function triggerEngine() {
+    if (isMemoryCritical()) {
+        console.warn(`[BACKPRESSURE] Memory critical! Skipping triggerEngine to allow GC.`);
+        return;
+    }
+
     const t0 = performance.now();
     let opportunitiesFound = 0;
 
@@ -288,6 +296,10 @@ async function triggerEngine() {
             const filtered = filterOpportunities(opportunities);
             
             if (filtered.length > 0) {
+                if (opportunitiesFound >= BACKPRESSURE_MAX_PER_BLOCK) {
+                    console.warn(`[BACKPRESSURE] Dropping opportunity for ${pos.user}. Max per run reached (${BACKPRESSURE_MAX_PER_BLOCK}).`);
+                    continue;
+                }
                 const best = filtered[0];
                 if (globalOpportunityCache.isRecentlyProcessed(pos.user, best.debtAsset)) {
                     console.log(`  -> ⏭️ SKIPPED (recently processed): User ${pos.user} debtAsset ${best.debtAsset}`);
@@ -470,6 +482,10 @@ async function startMonitor() {
 
     // 2. Poll Prices on new blocks (Fallback for MVP instead of tracking all Chainlink aggregators)
     provider.on("block", async (blockNumber) => {
+        if (isMemoryCritical()) {
+            console.warn(`[BACKPRESSURE] Memory critical! Dropping block ${blockNumber} processing.`);
+            return;
+        }
         const block = await provider.getBlock(blockNumber);
         currentTimestamp = BigInt(block!.timestamp);
 
@@ -510,6 +526,9 @@ async function startMonitor() {
 
         // 3.10: subgraph deltas for price history (monitor via subgraph)
         try {
+          if (isMemoryCritical()) {
+             throw new Error("Memory critical, skipping subgraph");
+          }
           const sg = new SubgraphClient(chainId);
           const sReserves = await sg.getReserves(5);
           for (const r of sReserves) {

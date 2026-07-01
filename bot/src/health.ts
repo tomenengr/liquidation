@@ -1,5 +1,12 @@
 import * as http from 'http';
 
+export const MEMORY_CRITICAL_THRESHOLD_MB = 500;
+
+export function isMemoryCritical(): boolean {
+  const heapUsedMB = process.memoryUsage().heapUsed / 1024 / 1024;
+  return heapUsedMB > MEMORY_CRITICAL_THRESHOLD_MB;
+}
+
 export class HealthServer {
   private port: number;
   private server: http.Server | null = null;
