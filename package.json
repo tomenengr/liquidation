@@ -31,9 +31,13 @@
   "license": "ISC",
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
+    "@types/chai": "^4.3.20",
+    "@types/mocha": "^10.0.10",
     "@types/node": "^26.0.1",
+    "chai": "^4.5.0",
     "dotenv": "^17.4.2",
     "ethers": "^6.17.0",
+    "mocha": "^10.8.2",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3"
   },

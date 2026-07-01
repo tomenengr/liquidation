@@ -104,6 +104,15 @@ export const config = {
   STRUCTURED_LOG: process.env.STRUCTURED_LOG === 'true' || false,
   BACKPRESSURE_MAX_PER_BLOCK: Number(process.env.BACKPRESSURE_MAX_PER_BLOCK || 5),
 
+// prod-003 Ops/Resilience
+  HEALTH_PORT: Number(process.env.HEALTH_PORT || 8080),
+  LOG_LEVEL: process.env.LOG_LEVEL || 'INFO',
+  LOG_FILE: process.env.LOG_FILE || 'bot.log',
+  RPC_FALLBACKS_ETHEREUM: process.env.RPC_FALLBACKS_ETHEREUM || '',
+  RPC_FALLBACKS_ARBITRUM: process.env.RPC_FALLBACKS_ARBITRUM || '',
+  RPC_FALLBACKS_BASE: process.env.RPC_FALLBACKS_BASE || '',
+  CIRCUIT_BREAKER_MAX_ERRORS: Number(process.env.CIRCUIT_BREAKER_MAX_ERRORS || 5),
+
   // Execution config (prod-001.02 - CRITICAL centralization):
   // DRY_RUN_EXECUTION (default true for safety) - set false to allow real execution.
   // LIQUIDATOR_ADDRESS (optional per-chain override) - used by future executor.
@@ -177,6 +186,13 @@ export const config = {
       MOCK_MEV: this.MOCK_MEV,
       MEV_RELAY_URL: (id === 1 ? this.MEV_RELAY_ETHEREUM : id === 42161 ? this.MEV_RELAY_ARBITRUM : id === 8453 ? this.MEV_RELAY_BASE : '') || this.MEV_RELAY_ETHEREUM,
       FLASHBOTS_AUTH_KEY: this.FLASHBOTS_AUTH_KEY,
+
+// prod-003 Ops/Resilience
+      HEALTH_PORT: this.HEALTH_PORT,
+      LOG_LEVEL: this.LOG_LEVEL,
+      LOG_FILE: this.LOG_FILE,
+      RPC_FALLBACKS: (id === 1 ? this.RPC_FALLBACKS_ETHEREUM : id === 42161 ? this.RPC_FALLBACKS_ARBITRUM : id === 8453 ? this.RPC_FALLBACKS_BASE : '').split(',').filter(Boolean),
+      CIRCUIT_BREAKER_MAX_ERRORS: this.CIRCUIT_BREAKER_MAX_ERRORS,
 
       // prod-001.02 execution fields (centralized, exposed via getChainConfig for all prod paths)
       DRY_RUN_EXECUTION: dryRunExecution,
