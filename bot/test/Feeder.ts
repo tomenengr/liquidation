@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { createProviderPool } from '../src/providerPool';
 import { ReserveDataView, UserPositionView, UserReservePosition } from '../src/engine/views';
 import { MulticallHelper } from '../src/multicall';
 import { getAddresses } from '../src/addresses';
@@ -37,7 +38,7 @@ const STABLE_DEBT_ABI = [
 ];
 
 export class Feeder {
-    provider: ethers.JsonRpcProvider;
+    provider: ethers.Provider;
     pool: ethers.Contract;
     oracle: ethers.Contract;
     dataProvider: ethers.Contract;
@@ -53,7 +54,7 @@ export class Feeder {
         const DATA_PROVIDER_ADDRESS = ADDRESSES.UI_POOL_DATA_PROVIDER.toLowerCase();
         this.poolAddress = POOL_ADDRESS;
 
-        this.provider = new ethers.JsonRpcProvider(rpcUrl);
+        this.provider = createProviderPool(rpcUrl, config.getChainConfig(this.chainId).RPC_FALLBACKS);
         this.pool = new ethers.Contract(POOL_ADDRESS, POOL_ABI, this.provider);
         this.oracle = new ethers.Contract(ORACLE_ADDRESS, ORACLE_ABI, this.provider);
         this.dataProvider = new ethers.Contract(DATA_PROVIDER_ADDRESS, DATA_PROVIDER_ABI, this.provider);

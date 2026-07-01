@@ -12,7 +12,7 @@ import { LiquidationExecutor } from "./executor";
  * Always post-ticket/executor. Preserves flow + 0-RPC.
  */
 export class MevBundleSubmitter {
-  private provider: ethers.JsonRpcProvider;
+  private provider: ethers.Provider;
   private maxRetries: number = 3;
   private retryDelayMs: number = 500;
   private chainId: number;
@@ -21,7 +21,7 @@ export class MevBundleSubmitter {
     const id = chainId ?? config.CHAIN_ID;
     this.chainId = id;
     const effectiveRpc = rpcUrl || config.getChainConfig(id).RPC_URL || config.RPC_URL;
-    this.provider = new ethers.JsonRpcProvider(effectiveRpc);
+    this.provider = createProviderPool(effectiveRpc, chainConfig.RPC_FALLBACKS);
   }
 
   /**

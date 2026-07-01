@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { createProviderPool } from './providerPool';
 import { config } from './config';
 import { Feeder } from '../test/Feeder';
 import { calculateUserAccountData } from './engine/calculateUserAccountData';
@@ -32,7 +33,7 @@ async function runE2E() {
     console.log("🚀 STARTING E2E DRY RUN (ANVIL EXECUTION) 🚀");
     console.log("==================================================\n");
 
-    const provider = new ethers.JsonRpcProvider(RPC_URL);
+    const provider = createProviderPool(RPC_URL, config.getChainConfig(CHAIN_ID).RPC_FALLBACKS);
     const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 
     // prod-001.13: fund gas on anvil (for deploy + exec tx) using shared helper. Multi-chain safe (noop on non-anvil).

@@ -41,6 +41,11 @@ export const config = {
   ARBITRUM_RPC_URL: process.env.ARBITRUM_RPC_URL || '',
   BASE_RPC_URL: process.env.BASE_RPC_URL || '',
 
+  // RPC Fallbacks (Task 3.04/3.05) - Comma separated lists
+  RPC_FALLBACKS: (process.env.RPC_FALLBACKS || '').split(',').map(s => s.trim()).filter(Boolean),
+  RPC_FALLBACKS_ARBITRUM: (process.env.RPC_FALLBACKS_ARBITRUM || '').split(',').map(s => s.trim()).filter(Boolean),
+  RPC_FALLBACKS_BASE: (process.env.RPC_FALLBACKS_BASE || '').split(',').map(s => s.trim()).filter(Boolean),
+
   // Chain (for multi-chain / L2 support)
   CHAIN_ID: Number(process.env.CHAIN_ID || 1), // 1=mainnet, 42161=arbitrum, 8453=base etc.
   IS_L2: process.env.IS_L2 === 'true' || false,
@@ -124,10 +129,17 @@ export const config = {
     // Select per-chain RPC URL (use explicit if set, else derive using user's key pattern for Alchemy etc.)
     // This fixes per-CHAIN_ID resolution for ETH/ARB/BASE. Multi-chain aware. Do NOT hardcode.
     let rpcUrl = this.RPC_URL;
+    let rpcFallbacks = this.RPC_FALLBACKS;
     if (id === 42161) {
       rpcUrl = this.ARBITRUM_RPC_URL || deriveAlchemyRpc(this.RPC_URL, 'arb') || this.RPC_URL;
+      rpcFallbacks = this.RPC_FALLBACKS_ARBITRUM.length > 0 
+        ? this.RPC_FALLBACKS_ARBITRUM 
+        : this.RPC_FALLBACKS.map(f => deriveAlchemyRpc(f, 'arb'));
     } else if (id === 8453) {
       rpcUrl = this.BASE_RPC_URL || deriveAlchemyRpc(this.RPC_URL, 'base') || this.RPC_URL;
+      rpcFallbacks = this.RPC_FALLBACKS_BASE.length > 0 
+        ? this.RPC_FALLBACKS_BASE 
+        : this.RPC_FALLBACKS.map(f => deriveAlchemyRpc(f, 'base'));
     }
 
     // Per-chain defaults (can be overridden via env)
@@ -156,6 +168,7 @@ export const config = {
       CHAIN_ID: id,
       IS_L2: isL2,
       RPC_URL: rpcUrl,
+      RPC_FALLBACKS: rpcFallbacks,
       UNISWAP_QUOTER_V2: addrs.UNISWAP_QUOTER_V2,
       UNISWAP_FEE_TIERS: this.UNISWAP_FEE_TIERS,
       MIN_DEBT_BASE: minDebt,
@@ -227,7 +240,8 @@ export const config = {
       if (rpcOrProvider) {
         let provider: ethers.Provider;
         if (typeof rpcOrProvider === 'string') {
-          provider = new ethers.JsonRpcProvider(rpcOrProvider);
+          const { createProviderPool } = require('./providerPool');
+          provider = createProviderPool(rpcOrProvider);
         } else {
           provider = rpcOrProvider;
         }

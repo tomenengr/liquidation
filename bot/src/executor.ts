@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { createProviderPool } from './providerPool';
 import { config } from './config';
 import { LiquidationOpportunity } from './profitCalculator';
 import { ExecutionTicket } from './ExecutionRouter';
@@ -50,7 +51,7 @@ export interface ExecutionResult {
  * TDD (001.09): RED test first asserting prominent DRY_RUN logs + getLiquidator not called on dry even on fork; uses config.DRY_RUN_EXECUTION.
  */
 export class LiquidationExecutor {
-  private provider: ethers.JsonRpcProvider;
+  private provider: ethers.Provider;
   private wallet: ethers.Wallet | null = null;
   private rpcUrl: string;
   private chainId: number;
@@ -64,7 +65,7 @@ export class LiquidationExecutor {
 
     // Use config-driven RPC (never hardcode)
     this.rpcUrl = rpcUrl || chainCfg.RPC_URL || config.RPC_URL;
-    this.provider = new ethers.JsonRpcProvider(this.rpcUrl);
+    this.provider = createProviderPool(this.rpcUrl, this.chainConfig.RPC_FALLBACKS);
 
     // Centralized wallet (null when no PRIVATE_KEY -> supports pure dry-run)
     this.wallet = config.getExecutorWallet(this.provider);
@@ -487,7 +488,7 @@ export class LiquidationExecutor {
  * Preserves 0-RPC (no change to calc paths).
  */
 export async function fundAnvilWallet(
-  provider: ethers.JsonRpcProvider | any,
+  provider: ethers.Provider | any,
   address: string,
   amount: bigint = 100n * (10n ** 18n)
 ): Promise<boolean> {
