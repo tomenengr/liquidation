@@ -117,14 +117,15 @@ export class Feeder {
 
         for (let i = 0; i < assets.length; i++) {
             const asset = assets[i];
-            const raw = reserveResults[i];
-            if (!raw) {
+            const rawTuple = reserveResults[i];
+            if (!rawTuple || !rawTuple[0]) {
                 aTokenAddrs.push("0x0000000000000000000000000000000000000000");
                 vTokenAddrs.push("0x0000000000000000000000000000000000000000");
                 sTokenAddrs.push("0x0000000000000000000000000000000000000000");
                 reserveDataList.push(null);
                 continue;
             }
+            const raw = rawTuple[0];
             const aAddr = raw[8] || raw.aTokenAddress;
             const sAddr = raw[9] || raw.stableDebtTokenAddress;
             const vAddr = raw[10] || raw.variableDebtTokenAddress;
