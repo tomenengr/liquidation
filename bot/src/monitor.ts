@@ -107,7 +107,8 @@ async function refetchDirtyUser(user: string) {
     try {
         const ASSETS = Array.from(reservesConfig.keys());
         // Since Feeder creates a new provider internally, we just use its provider block number
-        const blockTag = await feeder.provider.getBlockNumber(); 
+        // Back up 5 blocks to avoid out of result range
+        const blockTag = (await feeder.provider.getBlockNumber()) - 5; 
         const pos = await feeder.fetchUserPosition(user, ASSETS, blockTag);
         
         const index = userPositions.findIndex(u => u.user === user);
@@ -146,7 +147,8 @@ async function coldStart() {
     console.log("==================================================");
 
     const ASSETS: string[] = await pool.getReservesList();
-    const blockTag = await feeder.provider.getBlockNumber();
+    // Back up 5 blocks to avoid out of result range
+    const blockTag = (await feeder.provider.getBlockNumber()) - 5;
     const block = await feeder.provider.getBlock(blockTag);
     currentTimestamp = BigInt(block!.timestamp);
 

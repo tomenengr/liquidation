@@ -102,7 +102,8 @@ const logOpp = (msg: string, data?: any) => {
 async function coldStart() {
   console.log("❄️ [Prod] Cold start - loading reserves & hybrid users (DB/subgraph, no hardcoded)...");
   const ASSETS: string[] = await pool.getReservesList();
-  const blockTag = await provider.getBlockNumber();
+  // Back up 5 blocks to avoid "out of result range" on L2 RPC nodes
+  const blockTag = (await provider.getBlockNumber()) - 5;
   const block = await provider.getBlock(blockTag);
   currentTimestamp = BigInt(block!.timestamp);
 
