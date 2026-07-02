@@ -22,10 +22,13 @@ const BACKPRESSURE_MAX_PER_BLOCK = 10;
 const chainId = config.CHAIN_ID;
 const chainCfg = config.getChainConfig();
 const RPC_URL = chainCfg.RPC_URL;
+// Use config.getWssUrl() to correctly derive WSS per provider.
+// Simple http->ws replace breaks for zan.top (WSS path differs from HTTP path).
+const WS_URL = config.getWssUrl(chainId);
 const isAnvil = RPC_URL.includes('127.0.0.1') || RPC_URL.includes('localhost');
 
 // Robust WS + RPC (Task 1.15): basic reconnect + fallback
-let provider = new ethers.WebSocketProvider(RPC_URL);
+let provider = new ethers.WebSocketProvider(WS_URL);
 let feeder = new Feeder(RPC_URL, chainId);
 
 function setupReconnect() {
@@ -33,7 +36,7 @@ function setupReconnect() {
     console.error('[WS] Error, reconnecting in 2s...', err.message);
     setTimeout(() => {
       try {
-        provider = new ethers.WebSocketProvider(RPC_URL);
+        provider = new ethers.WebSocketProvider(WS_URL);
         feeder = new Feeder(RPC_URL, chainId);
         console.log('[WS] Reconnected');
       } catch (e) { console.error('Reconnect failed', e); }

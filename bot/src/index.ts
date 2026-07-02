@@ -5,6 +5,7 @@ import * as dotenv from "dotenv";
 dotenv.config();
 
 import { config } from './config';
+import { AlertManager, AlertLevel } from './alerting';
 import { Feeder } from '../test/Feeder';
 import { calculateUserAccountData } from './engine/calculateUserAccountData';
 import { calculateOptimalLiquidation, filterOpportunities } from './profitCalculator';
@@ -26,7 +27,9 @@ import { validateStartup } from './startup';
 
 const CHAIN_ID = config.CHAIN_ID;
 const RPC_URL = config.getChainConfig(CHAIN_ID).RPC_URL;
-const WS_URL = RPC_URL.replace(/^http/, 'ws');
+// Use config.getWssUrl() to correctly derive WSS per provider.
+// Simple http->ws replace breaks for zan.top (WSS path differs from HTTP path).
+const WS_URL = config.getWssUrl(CHAIN_ID);
 // Robust WS + RPC (1.15): reconnect + fallback + rate limit
 let provider = new ethers.WebSocketProvider(WS_URL);
 let feeder = new Feeder(RPC_URL, CHAIN_ID);
@@ -34,11 +37,13 @@ let feeder = new Feeder(RPC_URL, CHAIN_ID);
 function setupRobustProvider() {
   provider.on('error', (err) => {
     console.error('[WS] Error, attempting reconnect...');
+    AlertManager.sendAlert(AlertLevel.WARN, 'WebSocket 断线，尝试重连...', { err: err?.message }).catch(() => {});
     setTimeout(() => {
       try {
         provider = new ethers.WebSocketProvider(WS_URL);
         feeder = new Feeder(RPC_URL, CHAIN_ID);
         console.log('[WS] Reconnected');
+        AlertManager.sendAlert(AlertLevel.INFO, 'WebSocket 重连成功').catch(() => {});
       } catch (e) { console.error('Reconnect fail', e); }
     }, 2000);
   });
@@ -124,11 +129,27 @@ async function coldStart() {
     console.warn('[index] 0 users from hybrid DB/subgraph. Production should provide GRAPH_API_KEY or seed via events/scans. Proceeding with empty watchlist.');
   }
 
+  let skipped = 0;
   for (const user of USERS) {
-    const pos = await feeder.fetchUserPosition(user, ASSETS, blockTag);
-    userPositions.push(pos);
+    try {
+      const pos = await feeder.fetchUserPosition(user, ASSETS, blockTag);
+      userPositions.push(pos);
+    } catch (e: any) {
+      // RangeError / decode errors on individual users — skip and continue
+      skipped++;
+      if (skipped <= 3) {
+        console.warn(`[coldStart] Skip user ${user}: ${e.message}`);
+      }
+    }
   }
-  console.log(`✅ Loaded ${reservesConfig.size} reserves, ${userPositions.length} hybrid users (chainId=${chainId})`);
+  console.log(`✅ Loaded ${reservesConfig.size} reserves, ${userPositions.length} hybrid users (${skipped} skipped, chainId=${chainId})`);
+  await AlertManager.sendAlert(AlertLevel.INFO, `✅ Cold start 完成`, {
+    reserves: reservesConfig.size,
+    users: userPositions.length,
+    skipped,
+    chain: chainId,
+    rpc: RPC_URL.replace(/\/[^/]{20,}$/, '/***'),
+  });
 }
 
 function queueRecalculation() {
@@ -183,6 +204,24 @@ async function triggerEngine() {
         const execRes = await executor.execute(best, ticket, reservesConfig);
         logOpp(`     Stage 3 (executor): ${execRes.dryRun ? 'DRY-RUN only (no tx)' : (execRes.success ? 'SUCCESS' : 'FAILED')} ${execRes.txHash ? 'tx=' + execRes.txHash : ''}${execRes.reason || execRes.error ? ' ' + (execRes.reason || execRes.error) : ''}`);
 
+        // 通知：执行结果
+        if (!execRes.dryRun) {
+          if (execRes.success) {
+            await AlertManager.sendAlert(AlertLevel.SUCCESS, `清算成功执行！`, {
+              user: pos.user,
+              profit: `$${(Number(ticket.netProfitBase) / 1e8).toFixed(2)}`,
+              txHash: execRes.txHash,
+              debt: best.debtAsset,
+              collateral: best.collateralAsset,
+            });
+          } else {
+            await AlertManager.sendAlert(AlertLevel.ERROR, `清算执行失败`, {
+              user: pos.user,
+              reason: execRes.reason || execRes.error,
+            });
+          }
+        }
+
         // prod-001.10: conditional real path for bundle after executor. Keep sim for dry/MOCK. Deduped (create inside; top-level bundleSubmitter removed).
         if (!execRes.dryRun) {
           logOpp('Submitting MEV bundle (sim + retry, real path post-executor)...');
@@ -228,6 +267,12 @@ async function startProduction() {
   await coldStart();
 
   console.log("🟢 [Prod] Advanced Liquidation Bot started (using monitor + calc + router)");
+  await AlertManager.sendAlert(AlertLevel.INFO, '🟢 Bot 已启动', {
+    chain: CHAIN_ID,
+    dryRun: config.DRY_RUN_EXECUTION,
+    mockMev: config.MOCK_MEV,
+    rpc: RPC_URL.replace(/\/[^/]{20,}$/, '/***'),
+  });
 
   const healthServer = new HealthServer(config.HEALTH_PORT);
   await healthServer.start();
@@ -284,6 +329,16 @@ async function startProduction() {
 }
 
 // Error handling
-process.on('uncaughtException', (err) => console.error("Uncaught:", err));
+process.on('uncaughtException', (err) => {
+  console.error("Uncaught:", err);
+  AlertManager.sendAlert(AlertLevel.CRITICAL, `未捕获异常，Bot 可能崩溃`, {
+    error: err.message,
+    stack: err.stack?.split('\n')[1]?.trim(),
+  }).catch(() => {});
+});
+
+process.on('SIGTERM', () => {
+  AlertManager.sendAlert(AlertLevel.WARN, '🔄 Bot 正在重启 (SIGTERM)').catch(() => {});
+});
 
 startProduction().catch(console.error);

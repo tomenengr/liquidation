@@ -15,7 +15,8 @@ module.exports = {
       NODE_ENV: "development",
       CHAIN_ID: 1,
       MOCK_QUOTER: true,
-      DRY_RUN_EXECUTION: true
+      DRY_RUN_EXECUTION: true,
+      // 代理由系统环境变量或 .env 提供，不在此硬编码（确保跨机器兼容）
     },
     env_production: {
       NODE_ENV: "production",
@@ -33,7 +34,8 @@ module.exports = {
       NODE_ENV: "production",
       CHAIN_ID: 8453,
       MOCK_QUOTER: false,
-      DRY_RUN_EXECUTION: false
+      DRY_RUN_EXECUTION: false,
+      // 代理由系统环境变量或 .env 提供，不在此硬编码（确保跨机器兼容）
     }
   }]
 };

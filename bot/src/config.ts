@@ -226,6 +226,28 @@ export const config = {
     throw new Error(`No subgraph configured for chainId ${id}`);
   },
 
+  /**
+   * Returns the correct WSS URL for the given chainId.
+   * Prefers explicit WSS_URL / WSS_URL_ARBITRUM / WSS_URL_BASE env vars.
+   * Falls back to simple http->ws replacement (works for Alchemy/Infura).
+   * ⚠️  zan.top has different paths for HTTP and WSS so the simple replace breaks:
+   *   HTTP: https://api.zan.top/node/v1/base/mainnet/<key>
+   *   WSS:  wss://api.zan.top/node/ws/v1/base/mainnet/<key>
+   * Always set WSS_URL_* in .env when using zan.top.
+   */
+  getWssUrl(chainId?: number): string {
+    const id = chainId ?? this.CHAIN_ID;
+    const rpc = this.getChainConfig(id).RPC_URL;
+    if (id === 1) {
+      return process.env.WSS_URL || rpc.replace(/^https?/, 'wss').replace(/^http/, 'ws');
+    } else if (id === 42161) {
+      return process.env.WSS_URL_ARBITRUM || rpc.replace(/^https?/, 'wss').replace(/^http/, 'ws');
+    } else if (id === 8453) {
+      return process.env.WSS_URL_BASE || rpc.replace(/^https?/, 'wss').replace(/^http/, 'ws');
+    }
+    return process.env.WSS_URL || rpc.replace(/^https?/, 'wss').replace(/^http/, 'ws');
+  },
+
   // Convenience for subgraph client
   getGraphApiKey(): string {
     return this.GRAPH_API_KEY;

@@ -5,6 +5,13 @@ import { ethers } from 'ethers';
  * Wraps ethers.FallbackProvider for ethers v6.
  * It assigns priority to providers in the order they are passed,
  * ensuring the primary RPC is preferred.
+ *
+ * Key design decisions:
+ * - quorum=1: Accept the FIRST successful response from ANY provider.
+ *   This prevents "quorum not met" errors when free-tier nodes (Infura/Alchemy)
+ *   return rate-limit errors (-32005 / -32016) alongside a successful response.
+ * - stallTimeout: Primary gets a tight 1500ms window; fallbacks get progressively
+ *   longer timeouts so the pool races them in priority order without blocking.
  */
 export function createProviderPool(primaryUrl: string, fallbackUrls: string[] = []): ethers.Provider {
   const urls = [primaryUrl, ...fallbackUrls].filter(u => u && u.trim() !== '');
@@ -21,15 +28,20 @@ export function createProviderPool(primaryUrl: string, fallbackUrls: string[] = 
   const providers = urls.map((url, index) => {
     return {
       provider: new ethers.JsonRpcProvider(url),
-      // priority: lower number = higher priority. primary gets 1.
+      // priority: lower number = higher priority. primary (index=0) gets priority 1.
       priority: index + 1,
+      // weight=1 for all; quorum=1 so weight only affects tie-breaking
       weight: 1,
-      stallTimeout: 1500 + (index * 500) // Increase stall timeout for fallbacks
+      // Primary: tight 1500ms. Each fallback: +1s, max 6s.
+      // This lets FallbackProvider race providers in priority order and skip slow/rate-limited ones.
+      stallTimeout: Math.min(1500 + index * 1000, 6000),
     };
   });
 
-  // Quorum 1 means we accept the first successful response
-  return new ethers.FallbackProvider(providers);
+  // quorum=1: any single successful response is accepted immediately.
+  // This is the CRITICAL setting — without it, FallbackProvider requires quorum
+  // responses to agree, which fails when some providers return rate-limit errors.
+  return new ethers.FallbackProvider(providers, undefined, { quorum: 1 });
 }
 
 /**
