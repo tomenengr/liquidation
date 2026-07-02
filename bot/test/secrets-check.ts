@@ -24,9 +24,22 @@ function scanForSecrets(dir: string): string[] {
       const content = fs.readFileSync(fullPath, 'utf8');
       const matches = content.match(PRIVATE_KEY_PATTERN) || [];
 
+      // Check for hardcoded API keys / RPC URLs containing secret tokens (Alchemy / Infura / Zan.top / etc.)
+      const rpcKeyPattern = /(https?:\/\/[^\s"'`]+(?:alchemy\.com\/v2\/|infura\.io\/v3\/|zan\.top\/[^\s"'`]+\/)[a-zA-Z0-9_-]{16,})/g;
+      const rpcMatches = content.match(rpcKeyPattern) || [];
+
+      for (const rpcMatch of rpcMatches) {
+        // Only flag in bot/src or bot/test (excluding config fallback examples or standard tests)
+        if (fullPath.includes('bot/src')) {
+          issues.push(`HARDCODED RPC API KEY in ${fullPath}: ${rpcMatch}`);
+        }
+      }
+
       for (const match of matches) {
-        // Allow known test keys in forge-std or obvious Anvil comments, but flag in our bot code
+        // Allow known test keys in forge-std or obvious dummy test keys
         if (fullPath.includes('forge-std') || fullPath.includes('ox/')) continue;
+        if (match === '0x1234567890123456789012345678901234567890123456789012345678901234') continue;
+        if (match === '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80') continue; // Anvil #0
         
         // If the file is in bot/src or test and has a real-looking key
         if (fullPath.includes('bot/src') || fullPath.includes('bot/test')) {

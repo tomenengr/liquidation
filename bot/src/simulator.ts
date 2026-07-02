@@ -2,10 +2,10 @@ import { ethers } from "ethers";
 import { scanBorrowers } from "./scanner";
 // Fixed: removed non-existent estimateLiquidationProfit (was refactored to calculateOptimalLiquidation + filterOpportunities)
 
-const RPC_URL = "https://eth-mainnet.g.alchemy.com/v2/EHzHIlUjFLRkUJLVxDN-vh1wJorLrTeM";
-const provider = new ethers.JsonRpcProvider(RPC_URL);
-
 import { config } from './config';
+
+const RPC_URL = config.getChainConfig().RPC_URL;
+const provider = new ethers.JsonRpcProvider(RPC_URL);
 const POOL_ADDRESS = config.getAddresses().POOL;
 const POOL_ABI = [
     "function getUserAccountData(address user) external view returns (uint256 totalCollateralBase, uint256 totalDebtBase, uint256 availableBorrowsBase, uint256 currentLiquidationThreshold, uint256 ltv, uint256 healthFactor)"
