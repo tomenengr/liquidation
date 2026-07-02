@@ -31,7 +31,7 @@ const RPC_URL = config.getChainConfig(CHAIN_ID).RPC_URL;
 // Simple http->ws replace breaks for zan.top (WSS path differs from HTTP path).
 const WS_URL = config.getWssUrl(CHAIN_ID);
 // Robust WS + RPC (1.15): reconnect + fallback + rate limit
-let provider = new ethers.WebSocketProvider(WS_URL);
+let provider = new ethers.WebSocketProvider(WS_URL, CHAIN_ID, { staticNetwork: true });
 let feeder = new Feeder(RPC_URL, CHAIN_ID);
 
 function setupRobustProvider() {
@@ -40,7 +40,7 @@ function setupRobustProvider() {
     AlertManager.sendAlert(AlertLevel.WARN, 'WebSocket 断线，尝试重连...', { err: err?.message }).catch(() => {});
     setTimeout(() => {
       try {
-        provider = new ethers.WebSocketProvider(WS_URL);
+        provider = new ethers.WebSocketProvider(WS_URL, CHAIN_ID, { staticNetwork: true });
         feeder = new Feeder(RPC_URL, CHAIN_ID);
         console.log('[WS] Reconnected');
         AlertManager.sendAlert(AlertLevel.INFO, 'WebSocket 重连成功').catch(() => {});

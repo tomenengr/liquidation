@@ -54,7 +54,7 @@ export class Feeder {
         const DATA_PROVIDER_ADDRESS = ADDRESSES.AAVE_PROTOCOL_DATA_PROVIDER.toLowerCase();
         this.poolAddress = POOL_ADDRESS;
 
-        this.provider = createProviderPool(rpcUrl, config.getChainConfig(this.chainId).RPC_FALLBACKS);
+        this.provider = createProviderPool(rpcUrl, config.getChainConfig(this.chainId).RPC_FALLBACKS, this.chainId);
         this.pool = new ethers.Contract(POOL_ADDRESS, POOL_ABI, this.provider);
         this.oracle = new ethers.Contract(ORACLE_ADDRESS, ORACLE_ABI, this.provider);
         this.dataProvider = new ethers.Contract(DATA_PROVIDER_ADDRESS, DATA_PROVIDER_ABI, this.provider);

@@ -36,7 +36,7 @@ export class MevBundleSubmitter {
     this.chainId = id;
     const chainCfg = config.getChainConfig(id);
     const effectiveRpc = rpcUrl || chainCfg.RPC_URL || config.RPC_URL;
-    this.provider = createProviderPool(effectiveRpc, chainCfg.RPC_FALLBACKS);
+    this.provider = createProviderPool(effectiveRpc, chainCfg.RPC_FALLBACKS, this.chainId);
   }
 
   /**

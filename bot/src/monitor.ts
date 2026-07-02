@@ -28,7 +28,7 @@ const WS_URL = config.getWssUrl(chainId);
 const isAnvil = RPC_URL.includes('127.0.0.1') || RPC_URL.includes('localhost');
 
 // Robust WS + RPC (Task 1.15): basic reconnect + fallback
-let provider = new ethers.WebSocketProvider(WS_URL);
+let provider = new ethers.WebSocketProvider(WS_URL, CHAIN_ID, { staticNetwork: true });
 let feeder = new Feeder(RPC_URL, chainId);
 
 function setupReconnect() {
@@ -36,7 +36,7 @@ function setupReconnect() {
     console.error('[WS] Error, reconnecting in 2s...', err.message);
     setTimeout(() => {
       try {
-        provider = new ethers.WebSocketProvider(WS_URL);
+        provider = new ethers.WebSocketProvider(WS_URL, CHAIN_ID, { staticNetwork: true });
         feeder = new Feeder(RPC_URL, chainId);
         console.log('[WS] Reconnected');
       } catch (e) { console.error('Reconnect failed', e); }

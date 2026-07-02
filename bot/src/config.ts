@@ -278,7 +278,7 @@ export const config = {
         let provider: ethers.Provider;
         if (typeof rpcOrProvider === 'string') {
           const { createProviderPool } = require('./providerPool');
-          provider = createProviderPool(rpcOrProvider);
+          provider = createProviderPool(rpcOrProvider, [], this.CHAIN_ID);
         } else {
           provider = rpcOrProvider;
         }
