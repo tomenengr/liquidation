@@ -24,15 +24,39 @@ export async function bulkSyncFromSubgraph(chainId?: number, limit = 50): Promis
   initDb();  // ensure open
 
   const client = new SubgraphClient(cId);
-  // Use rich batch for positions to fix mapping limitation
-  const richPositions = await client.getUserReservesBatch(limit);
 
+  // Step 1: Use client.getUsersWithDebt in a loop to fetch all users with borrowedReservesCount > 0
+  const allUsers: SubgraphUser[] = [];
+  let skip = 0;
+  const step = 1000;
+  while (true) {
+    const users = await client.getUsersWithDebt(step, skip);
+    allUsers.push(...users);
+    if (users.length < step) break;
+    skip += step;
+    if (skip >= 5000) break; // Max skip on standard The Graph configurations
+  }
+
+  // Step 2: Extract the user IDs into an array.
+  const userIds = allUsers.map(u => u.id.toLowerCase());
+
+  // Step 3: Chunk the user IDs into batches of 500.
+  const chunkSize = 500;
+  const chunks: string[][] = [];
+  for (let i = 0; i < userIds.length; i += chunkSize) {
+    chunks.push(userIds.slice(i, i + chunkSize));
+  }
+
+  // Step 4 & 5: For each chunk, call client.getUserReservesByUsers(chunk), group by user.id
   const userMap: Record<string, any[]> = {};
-  for (const p of richPositions) {
-    const uid = p.user?.id?.toLowerCase() || '';
-    if (uid) {
-      if (!userMap[uid]) userMap[uid] = [];
-      userMap[uid].push(p);
+  for (const chunk of chunks) {
+    const richPositions = await client.getUserReservesByUsers(chunk);
+    for (const p of richPositions) {
+      const uid = p.user?.id?.toLowerCase() || '';
+      if (uid) {
+        if (!userMap[uid]) userMap[uid] = [];
+        userMap[uid].push(p);
+      }
     }
   }
 

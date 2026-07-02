@@ -250,6 +250,44 @@ export class SubgraphClient {
     const data = await this.fetchGraphQL<{ userReserves: SubgraphUserReserve[] }>(q, { first });
     return data?.userReserves || [];
   }
+
+  async getUserReservesByUsers(users: string[]): Promise<SubgraphUserReserve[]> {
+    let allReserves: SubgraphUserReserve[] = [];
+    let skip = 0;
+    const first = 1000;
+    while (true) {
+      const q = `
+        query GetUserReservesByUsers($users: [String!]!, $first: Int!, $skip: Int!) {
+          userReserves(first: $first, skip: $skip, where: { user_in: $users, scaledVariableDebt_gt: "0" }) {
+            user { id }
+            scaledATokenBalance
+            scaledVariableDebt
+            principalStableDebt
+            usageAsCollateralEnabledOnUser
+            reserve {
+              id
+              symbol
+              decimals
+              price { priceInEth }
+              liquidityIndex
+              variableBorrowIndex
+              reserveLiquidationThreshold
+              reserveLiquidationBonus
+            }
+          }
+        }
+      `;
+      const data = await this.fetchGraphQL<{ userReserves: SubgraphUserReserve[] }>(q, { users, first, skip });
+      const reserves = data?.userReserves || [];
+      allReserves = allReserves.concat(reserves);
+      if (reserves.length < first) {
+        break;
+      }
+      skip += first;
+      if (skip >= 5000) break; // Subgraph standard skip limit
+    }
+    return allReserves;
+  }
 }
 
 /**

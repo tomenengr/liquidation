@@ -28,7 +28,7 @@ const WS_URL = config.getWssUrl(chainId);
 const isAnvil = RPC_URL.includes('127.0.0.1') || RPC_URL.includes('localhost');
 
 // Robust WS + RPC (Task 1.15): basic reconnect + fallback
-let provider = new ethers.WebSocketProvider(WS_URL, CHAIN_ID, { staticNetwork: true });
+let provider = new ethers.WebSocketProvider(WS_URL, chainId, { staticNetwork: true });
 let feeder = new Feeder(RPC_URL, chainId);
 
 function setupReconnect() {
@@ -36,7 +36,7 @@ function setupReconnect() {
     console.error('[WS] Error, reconnecting in 2s...', err.message);
     setTimeout(() => {
       try {
-        provider = new ethers.WebSocketProvider(WS_URL, CHAIN_ID, { staticNetwork: true });
+        provider = new ethers.WebSocketProvider(WS_URL, chainId, { staticNetwork: true });
         feeder = new Feeder(RPC_URL, chainId);
         console.log('[WS] Reconnected');
       } catch (e) { console.error('Reconnect failed', e); }
@@ -107,9 +107,18 @@ async function refetchDirtyUser(user: string) {
     try {
         const ASSETS = Array.from(reservesConfig.keys());
         // Since Feeder creates a new provider internally, we just use its provider block number
-        // Back up 5 blocks to avoid out of result range
-        const blockTag = (await feeder.provider.getBlockNumber()) - 5; 
-        const pos = await feeder.fetchUserPosition(user, ASSETS, blockTag);
+        const blockTag = await feeder.provider.getBlockNumber();
+        let pos;
+        try {
+            pos = await feeder.fetchUserPosition(user, ASSETS, blockTag);
+        } catch (err: any) {
+            if (err.message && (err.message.includes('out of result range') || err.message.includes('header not found'))) {
+                // Fallback to latest block if strict blockTag fails (e.g. non-archive or laggy RPC)
+                pos = await feeder.fetchUserPosition(user, ASSETS, undefined as any);
+            } else {
+                throw err;
+            }
+        }
         
         const index = userPositions.findIndex(u => u.user === user);
         if (index !== -1) {
@@ -147,8 +156,7 @@ async function coldStart() {
     console.log("==================================================");
 
     const ASSETS: string[] = await pool.getReservesList();
-    // Back up 5 blocks to avoid out of result range
-    const blockTag = (await feeder.provider.getBlockNumber()) - 5;
+    const blockTag = await feeder.provider.getBlockNumber();
     const block = await feeder.provider.getBlock(blockTag);
     currentTimestamp = BigInt(block!.timestamp);
 
@@ -239,7 +247,16 @@ async function coldStart() {
     if (!loadedEngineFromSubgraph) {
       console.log(`[3] Pulling User Positions (Scaled Balances) ONLY for at-risk watch list (0-RPC via Feeder)...`);
       for (const user of USERS) {
-          const pos = await feeder.fetchUserPosition(user, ASSETS, blockTag);
+          let pos;
+          try {
+              pos = await feeder.fetchUserPosition(user, ASSETS, blockTag);
+          } catch (err: any) {
+              if (err.message && (err.message.includes('out of result range') || err.message.includes('header not found'))) {
+                  pos = await feeder.fetchUserPosition(user, ASSETS, undefined as any);
+              } else {
+                  throw err;
+              }
+          }
           userPositions.push(pos);
       }
       console.log(`    -> Loaded ${userPositions.length} at-risk borrowers into memory (engine).`);
