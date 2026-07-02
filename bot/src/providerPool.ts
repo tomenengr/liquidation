@@ -13,21 +13,23 @@ import { ethers } from 'ethers';
  * - stallTimeout: Primary gets a tight 1500ms window; fallbacks get progressively
  *   longer timeouts so the pool races them in priority order without blocking.
  */
-export function createProviderPool(primaryUrl: string, fallbackUrls: string[] = []): ethers.Provider {
+export function createProviderPool(primaryUrl: string, fallbackUrls: string[] = [], chainId?: number): ethers.Provider {
   const urls = [primaryUrl, ...fallbackUrls].filter(u => u && u.trim() !== '');
   
   if (urls.length === 0) {
     throw new Error('No RPC URLs provided to provider pool');
   }
 
+  const networkOptions = chainId ? { staticNetwork: ethers.Network.from(chainId) } : undefined;
+
   // If only one URL, return a standard JsonRpcProvider to save overhead
   if (urls.length === 1) {
-    return new ethers.JsonRpcProvider(urls[0]);
+    return new ethers.JsonRpcProvider(urls[0], chainId ? ethers.Network.from(chainId) : undefined, networkOptions);
   }
 
   const providers = urls.map((url, index) => {
     return {
-      provider: new ethers.JsonRpcProvider(url),
+      provider: new ethers.JsonRpcProvider(url, chainId ? ethers.Network.from(chainId) : undefined, networkOptions),
       // priority: lower number = higher priority. primary (index=0) gets priority 1.
       priority: index + 1,
       // weight=1 for all; quorum=1 so weight only affects tie-breaking
