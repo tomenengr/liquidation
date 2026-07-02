@@ -91,16 +91,19 @@ export class Feeder {
         };
     }
 
-    async fetchUserPosition(user: string, assets: string[], blockTag: number): Promise<UserPositionView> {
-        const userConfig = await this.pool.getUserConfiguration(user, { blockTag });
+    async fetchUserPosition(user: string, assets: string[], blockTag?: number | string): Promise<UserPositionView> {
+        const overrides = blockTag !== undefined ? { blockTag } : {};
+        const userConfig = await this.pool.getUserConfiguration(user, overrides);
         const configBitmap = BigInt(userConfig.data);
 
         // E-Mode support: fetch user's current eMode category (0 if none)
         let userEMode = 0;
-        try {
-            const em = await this.pool.getUserEMode(user, { blockTag });
-            userEMode = Number(em) || 0;
-        } catch {}
+        if (userConfig.data !== 0n) {
+            try {
+                const em = await this.pool.getUserEMode(user, overrides);
+                userEMode = Number(em) || 0;
+            } catch {}
+        }
 
         const reservesData = new Map<string, UserReservePosition>();
 
@@ -147,9 +150,9 @@ export class Feeder {
             // For stable, we can batch too but for simplicity use parallel single (can extend)
             const sToken = new ethers.Contract(rd.stableDebtTokenAddress, STABLE_DEBT_ABI, this.provider);
             const [principalStable, stableRate, stableUpdated] = await Promise.all([
-                sToken.principalBalanceOf(user, { blockTag }),
-                sToken.getUserStableRate(user, { blockTag }),
-                sToken.getUserLastUpdated(user, { blockTag })
+                sToken.principalBalanceOf(user, overrides),
+                sToken.getUserStableRate(user, overrides),
+                sToken.getUserLastUpdated(user, overrides)
             ]);
 
             const reserveId = rd.id;
